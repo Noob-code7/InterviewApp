@@ -5,6 +5,7 @@ import morgan from 'morgan'
 import cookieParser from 'cookie-parser'
 import rateLimit from 'express-rate-limit'
 import authRoutes from './routes/auth.js'
+import sessionRoutes from './routes/sessions.js'
 
 const app = express()
 
@@ -48,9 +49,9 @@ app.get('/api', (_req, res) => {
 
 // ── Routes ───────────────────────────────────────────────────────────────────
 app.use('/api/auth', authRoutes)
+app.use('/api/sessions', sessionRoutes)
 
 // ── Route stubs — filled in per phase ─────────────────────────────────────────
-// Phase 3:  app.use('/api/sessions', sessionRoutes)
 // Phase 3:  app.use('/api/questions', questionRoutes)
 // Phase 4:  app.use('/api/answers', answerRoutes)
 // Phase 5:  app.use('/api/analysis', analysisRoutes)

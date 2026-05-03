@@ -4,6 +4,8 @@ import ProtectedRoute from './components/layout/ProtectedRoute.jsx'
 import LandingPage from './pages/LandingPage.jsx'
 import LoginPage from './pages/LoginPage.jsx'
 import RegisterPage from './pages/RegisterPage.jsx'
+import DashboardPage from './pages/DashboardPage.jsx'
+import InterviewSetupPage from './pages/InterviewSetupPage.jsx'
 
 // ── Placeholder for pages built in future phases ──────────────────────────────
 const Placeholder = ({ name }) => (
@@ -38,12 +40,12 @@ function App() {
       {/* Protected routes — with Navbar */}
       <Route path="/dashboard" element={
         <ProtectedRoute>
-          <WithNavbar><Placeholder name="Dashboard" /></WithNavbar>
+          <WithNavbar><DashboardPage /></WithNavbar>
         </ProtectedRoute>
       } />
       <Route path="/interview/setup" element={
         <ProtectedRoute>
-          <WithNavbar><Placeholder name="Interview Setup" /></WithNavbar>
+          <WithNavbar><InterviewSetupPage /></WithNavbar>
         </ProtectedRoute>
       } />
       <Route path="/interview/live/:sessionId" element={
