@@ -1,0 +1,121 @@
+version: '3.9'
+
+services:
+  # ─── Infrastructure ───────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: interview_redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  mongo:
+    image: mongo:7
+    container_name: interview_mongo
+    ports:
+      - "27017:27017"
+    environment:
+      MONGO_INITDB_DATABASE: interviewapp
+    volumes:
+      - mongo-data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ─── Backend ──────────────────────────────────────────────────────────────
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: interview_backend
+    ports:
+      - "5000:5000"
+    env_file:
+      - ./backend/.env
+    depends_on:
+      redis:
+        condition: service_healthy
+      mongo:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ─── AI Microservices ──────────────────────────────────────────────────────
+  face-service:
+    build:
+      context: ./ai-services/face-service
+      dockerfile: Dockerfile
+    container_name: interview_face
+    ports:
+      - "8001:8001"
+    env_file:
+      - ./ai-services/face-service/.env
+    restart: unless-stopped
+
+  voice-service:
+    build:
+      context: ./ai-services/voice-service
+      dockerfile: Dockerfile
+    container_name: interview_voice
+    ports:
+      - "8002:8002"
+    env_file:
+      - ./ai-services/voice-service/.env
+    restart: unless-stopped
+
+  nlp-service:
+    build:
+      context: ./ai-services/nlp-service
+      dockerfile: Dockerfile
+    container_name: interview_nlp
+    ports:
+      - "8003:8003"
+    env_file:
+      - ./ai-services/nlp-service/.env
+    restart: unless-stopped
+
+  question-service:
+    build:
+      context: ./ai-services/question-service
+      dockerfile: Dockerfile
+    container_name: interview_questions
+    ports:
+      - "8004:8004"
+    env_file:
+      - ./ai-services/question-service/.env
+    restart: unless-stopped
+
+  report-service:
+    build:
+      context: ./ai-services/report-service
+      dockerfile: Dockerfile
+    container_name: interview_report
+    ports:
+      - "8005:8005"
+    env_file:
+      - ./ai-services/report-service/.env
+    restart: unless-stopped
+
+  # ─── Frontend ──────────────────────────────────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: interview_frontend
+    ports:
+      - "5173:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  redis-data:
+  mongo-data:
