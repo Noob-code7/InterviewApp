@@ -4,8 +4,16 @@ import helmet from 'helmet'
 import morgan from 'morgan'
 import cookieParser from 'cookie-parser'
 import rateLimit from 'express-rate-limit'
+import path from 'path'
+import { fileURLToPath } from 'url'
 import authRoutes from './routes/auth.js'
 import sessionRoutes from './routes/sessions.js'
+import questionRoutes from './routes/questions.js'
+import answerRoutes from './routes/answers.js'
+
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = path.dirname(__filename)
+
 
 const app = express()
 
@@ -42,6 +50,9 @@ app.get('/health', (_req, res) => {
   res.json({ success: true, data: { status: 'OK', timestamp: new Date().toISOString() } })
 })
 
+// ── Static Files ─────────────────────────────────────────────────────────────
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')))
+
 // ── API root ──────────────────────────────────────────────────────────────────
 app.get('/api', (_req, res) => {
   res.json({ success: true, data: { message: 'AI Interview Platform API v1' } })
@@ -50,10 +61,10 @@ app.get('/api', (_req, res) => {
 // ── Routes ───────────────────────────────────────────────────────────────────
 app.use('/api/auth', authRoutes)
 app.use('/api/sessions', sessionRoutes)
+app.use('/api/sessions', questionRoutes)
+app.use('/api/sessions', answerRoutes)
 
 // ── Route stubs — filled in per phase ─────────────────────────────────────────
-// Phase 3:  app.use('/api/questions', questionRoutes)
-// Phase 4:  app.use('/api/answers', answerRoutes)
 // Phase 5:  app.use('/api/analysis', analysisRoutes)
 // Phase 6:  app.use('/api/writing', writingRoutes)
 // Phase 7:  app.use('/api/reports', reportRoutes)

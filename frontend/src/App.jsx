@@ -6,6 +6,8 @@ import LoginPage from './pages/LoginPage.jsx'
 import RegisterPage from './pages/RegisterPage.jsx'
 import DashboardPage from './pages/DashboardPage.jsx'
 import InterviewSetupPage from './pages/InterviewSetupPage.jsx'
+import LiveInterviewPage from './pages/LiveInterviewPage.jsx'
+import ProcessingPage from './pages/ProcessingPage.jsx'
 
 // ── Placeholder for pages built in future phases ──────────────────────────────
 const Placeholder = ({ name }) => (
@@ -50,7 +52,7 @@ function App() {
       } />
       <Route path="/interview/live/:sessionId" element={
         <ProtectedRoute>
-          <Placeholder name="Live Interview" />
+          <LiveInterviewPage />
         </ProtectedRoute>
       } />
       <Route path="/interview/writing/:sessionId" element={
@@ -60,7 +62,7 @@ function App() {
       } />
       <Route path="/interview/processing" element={
         <ProtectedRoute>
-          <WithNavbar><Placeholder name="Processing Results..." /></WithNavbar>
+          <WithNavbar><ProcessingPage /></WithNavbar>
         </ProtectedRoute>
       } />
       <Route path="/report/:sessionId" element={
