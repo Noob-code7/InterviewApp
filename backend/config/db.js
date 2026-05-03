@@ -1,7 +1,7 @@
 import mongoose from 'mongoose'
 
 /**
- * Connect to MongoDB Atlas.
+ * Connect to MongoDB Atlas or local MongoDB.
  * Calls process.exit(1) on failure — cannot run without DB.
  */
 const connectDB = async () => {
