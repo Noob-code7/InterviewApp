@@ -4,6 +4,7 @@ import helmet from 'helmet'
 import morgan from 'morgan'
 import cookieParser from 'cookie-parser'
 import rateLimit from 'express-rate-limit'
+import authRoutes from './routes/auth.js'
 
 const app = express()
 
@@ -45,8 +46,10 @@ app.get('/api', (_req, res) => {
   res.json({ success: true, data: { message: 'AI Interview Platform API v1' } })
 })
 
+// ── Routes ───────────────────────────────────────────────────────────────────
+app.use('/api/auth', authRoutes)
+
 // ── Route stubs — filled in per phase ─────────────────────────────────────────
-// Phase 2:  app.use('/api/auth', authRoutes)
 // Phase 3:  app.use('/api/sessions', sessionRoutes)
 // Phase 3:  app.use('/api/questions', questionRoutes)
 // Phase 4:  app.use('/api/answers', answerRoutes)

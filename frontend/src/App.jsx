@@ -1,29 +1,93 @@
 import { Routes, Route } from 'react-router-dom'
+import Navbar from './components/layout/Navbar.jsx'
+import ProtectedRoute from './components/layout/ProtectedRoute.jsx'
+import LandingPage from './pages/LandingPage.jsx'
+import LoginPage from './pages/LoginPage.jsx'
+import RegisterPage from './pages/RegisterPage.jsx'
 
-// Placeholder pages — replaced in later phases
+// ── Placeholder for pages built in future phases ──────────────────────────────
 const Placeholder = ({ name }) => (
-  <div className="min-h-screen flex items-center justify-center bg-gray-900">
-    <div className="text-center">
-      <h1 className="text-4xl font-bold text-white mb-2">{name}</h1>
-      <p className="text-gray-400">Coming soon — being built in a later phase</p>
+  <div className="min-h-[calc(100vh-4rem)] flex items-center justify-center bg-brand-bg">
+    <div className="card p-12 text-center max-w-sm w-full mx-4">
+      <div className="w-12 h-12 rounded-full bg-primary-light flex items-center justify-center mx-auto mb-4">
+        <span className="text-2xl">🚧</span>
+      </div>
+      <h1 className="text-xl font-bold text-brand-text mb-2">{name}</h1>
+      <p className="text-sm text-brand-muted">Coming in a future phase</p>
     </div>
   </div>
 )
 
+// ── Layout wrapper: page with top Navbar ──────────────────────────────────────
+const WithNavbar = ({ children }) => (
+  <>
+    <Navbar />
+    <main>{children}</main>
+  </>
+)
+
+// ── App ───────────────────────────────────────────────────────────────────────
 function App() {
   return (
     <Routes>
-      <Route path="/" element={<Placeholder name="Landing" />} />
-      <Route path="/login" element={<Placeholder name="Login" />} />
-      <Route path="/register" element={<Placeholder name="Register" />} />
-      <Route path="/dashboard" element={<Placeholder name="Dashboard" />} />
-      <Route path="/interview/setup" element={<Placeholder name="Interview Setup" />} />
-      <Route path="/interview/live/:sessionId" element={<Placeholder name="Live Interview" />} />
-      <Route path="/interview/writing/:sessionId" element={<Placeholder name="Writing Test" />} />
-      <Route path="/interview/processing" element={<Placeholder name="Processing" />} />
-      <Route path="/report/:sessionId" element={<Placeholder name="Report" />} />
-      <Route path="/history" element={<Placeholder name="History" />} />
-      <Route path="/profile" element={<Placeholder name="Profile" />} />
+      {/* Public routes — no Navbar */}
+      <Route path="/"         element={<LandingPage />} />
+      <Route path="/login"    element={<LoginPage />} />
+      <Route path="/register" element={<RegisterPage />} />
+
+      {/* Protected routes — with Navbar */}
+      <Route path="/dashboard" element={
+        <ProtectedRoute>
+          <WithNavbar><Placeholder name="Dashboard" /></WithNavbar>
+        </ProtectedRoute>
+      } />
+      <Route path="/interview/setup" element={
+        <ProtectedRoute>
+          <WithNavbar><Placeholder name="Interview Setup" /></WithNavbar>
+        </ProtectedRoute>
+      } />
+      <Route path="/interview/live/:sessionId" element={
+        <ProtectedRoute>
+          <Placeholder name="Live Interview" />
+        </ProtectedRoute>
+      } />
+      <Route path="/interview/writing/:sessionId" element={
+        <ProtectedRoute>
+          <Placeholder name="Writing Test" />
+        </ProtectedRoute>
+      } />
+      <Route path="/interview/processing" element={
+        <ProtectedRoute>
+          <WithNavbar><Placeholder name="Processing Results..." /></WithNavbar>
+        </ProtectedRoute>
+      } />
+      <Route path="/report/:sessionId" element={
+        <ProtectedRoute>
+          <WithNavbar><Placeholder name="Interview Report" /></WithNavbar>
+        </ProtectedRoute>
+      } />
+      <Route path="/history" element={
+        <ProtectedRoute>
+          <WithNavbar><Placeholder name="History" /></WithNavbar>
+        </ProtectedRoute>
+      } />
+      <Route path="/profile" element={
+        <ProtectedRoute>
+          <WithNavbar><Placeholder name="Profile" /></WithNavbar>
+        </ProtectedRoute>
+      } />
+
+      {/* 404 */}
+      <Route path="*" element={
+        <WithNavbar>
+          <div className="min-h-[calc(100vh-4rem)] flex items-center justify-center bg-brand-bg">
+            <div className="card p-12 text-center max-w-sm w-full mx-4">
+              <h1 className="text-6xl font-extrabold text-primary mb-4">404</h1>
+              <p className="text-brand-muted">Page not found.</p>
+            </div>
+          </div>
+        </WithNavbar>
+      } />
     </Routes>
   )
 }
