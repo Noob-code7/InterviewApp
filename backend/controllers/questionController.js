@@ -99,7 +99,6 @@ export const generateQuestions = async (req, res) => {
 
     // Fallback if we need more questions than the bank has
     while (selectedQuestions.length < count) {
-      // pick a random question from the current bank
       const fallback = bank[Math.floor(Math.random() * bank.length)];
       selectedQuestions.push(fallback);
     }
@@ -114,6 +113,7 @@ export const generateQuestions = async (req, res) => {
 
     return sendSuccess(res, { session }, 201);
   } catch (err) {
+    console.error("ERROR IN GENERATE QUESTIONS:", err);
     return sendError(res, err.message, 500);
   }
 };
