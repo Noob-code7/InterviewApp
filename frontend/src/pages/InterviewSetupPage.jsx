@@ -66,10 +66,24 @@ export default function InterviewSetupPage() {
   const handleStart = async () => {
     setCreating(true)
     try {
+      let referenceImage = null;
+      if (videoRef.current && videoRef.current.readyState === 4) {
+        const canvas = document.createElement('canvas');
+        canvas.width = videoRef.current.videoWidth;
+        canvas.height = videoRef.current.videoHeight;
+        const ctx = canvas.getContext('2d');
+        // Handle mirroring because the video has scale-x-[-1]
+        ctx.translate(canvas.width, 0);
+        ctx.scale(-1, 1);
+        ctx.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
+        referenceImage = canvas.toDataURL('image/jpeg', 0.8);
+      }
+
       const { data } = await sessionsApi.create({ 
         role: interviewType === 'company' && company.trim() ? `${company} - ${role}` : role, 
         interviewType, 
-        questionCount 
+        questionCount,
+        referenceImage
       })
       navigate(`/interview/live/${data.data.session._id}`)
     } catch (err) {

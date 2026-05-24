@@ -132,11 +132,15 @@ const getValidatedFilePath = async (filename) => {
 /**
  * Sends a file to the microservice via Axios.
  */
-export const sendToAnalyzer = async (filePath, targetUrl, fieldName) => {
+export const sendToAnalyzer = async (filePath, targetUrl, fieldName, referenceImagePath = null) => {
   if (!filePath) return {};
 
   const formData = new FormData();
   formData.append(fieldName, fs.createReadStream(filePath));
+
+  if (referenceImagePath) {
+    formData.append("reference_image", fs.createReadStream(referenceImagePath));
+  }
 
   const response = await axios.post(`${targetUrl}/analyze`, formData, {
     headers: formData.getHeaders(),
@@ -212,6 +216,17 @@ const worker = new Worker(
           try {
             const videoFilename = answer.videoUrl.split("/uploads/")[1];
             const videoPath = await getValidatedFilePath(videoFilename);
+            
+            let referenceImagePath = null;
+            if (session.referenceImageUrl) {
+              const refFilename = session.referenceImageUrl.split("/uploads/")[1];
+              try {
+                referenceImagePath = await getValidatedFilePath(refFilename);
+              } catch(e) {
+                console.error(`[Worker] Reference image not found for session ${session._id}`);
+              }
+            }
+
             if (videoPath) {
               console.log(
                 `[Worker] Sending video for answer ${answer._id} to Face Service`,
@@ -220,8 +235,13 @@ const worker = new Worker(
                 videoPath,
                 FACE_SERVICE_URL,
                 "video",
+                referenceImagePath
               );
               answer.faceAnalysis = faceData;
+              
+              if (faceData.faceSubstitutionAlert) {
+                session.faceSubstitutionAlert = true;
+              }
             }
           } catch (err) {
             console.error(

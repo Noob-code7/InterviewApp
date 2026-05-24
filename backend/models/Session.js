@@ -98,6 +98,9 @@ const sessionSchema = new mongoose.Schema(
     // Report — Phase 7
     reportUrl:   { type: String, default: '' },
     reportData:  { type: mongoose.Schema.Types.Mixed, default: null },
+    // Face verification
+    referenceImageUrl: { type: String, default: '' },
+    faceSubstitutionAlert: { type: Boolean, default: false },
   },
   { timestamps: true, toJSON: { virtuals: true }, toObject: { virtuals: true } }
 )

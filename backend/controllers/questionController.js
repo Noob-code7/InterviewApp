@@ -58,7 +58,7 @@ export const generateQuestions = async (req, res) => {
       // Include faculty-uploaded questions for this user's college if any
       try {
         const collegeQuestions = await Question.find({
-          college: session.user?.college || session.college || null,
+          college: req.user.college || session.college || null,
         });
         if (collegeQuestions && collegeQuestions.length) {
           bank = [...collegeQuestions.map((q) => q.questionText), ...bank];
