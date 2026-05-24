@@ -65,8 +65,8 @@ app.get("/health", (_req, res) => {
 });
 
 // ── Static Files ─────────────────────────────────────────────────────────────
-const uploadsDir = process.env.UPLOADS_DIR || path.join(__dirname, 'uploads')
-app.use('/uploads', express.static(uploadsDir))
+const uploadsDir = process.env.UPLOADS_DIR || path.join(__dirname, "uploads");
+app.use("/uploads", express.static(uploadsDir));
 
 // ── API root ──────────────────────────────────────────────────────────────────
 app.get("/api", (_req, res) => {
