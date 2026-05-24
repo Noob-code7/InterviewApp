@@ -1,22 +1,83 @@
-import { useEffect } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
+import api from '../utils/api.js'
 import { Card } from '../components/ui/index.js'
 
 export default function ProcessingPage() {
   const navigate = useNavigate()
   const { state } = useLocation()
+  const sessionId = state?.sessionId
+  const [error, setError] = useState(null)
+  const errorRef = useRef(null)
+
+  const setAndRefError = (errMsg) => {
+    errorRef.current = errMsg
+    setError(errMsg)
+  }
   
   useEffect(() => {
-    // In a real application (Phase 5/7), this would poll the backend 
-    // or listen to a WebSocket to know when the report is ready.
-    // For now, we just simulate a 5 second processing delay and navigate to the dashboard.
-    
-    const timer = setTimeout(() => {
+    if (!sessionId) {
       navigate('/dashboard')
-    }, 5000)
+      return
+    }
+
+    let intervalId
+    let isCancelled = false
+
+    const triggerAnalysis = async () => {
+      try {
+        await api.post(`/analysis/${sessionId}/start`)
+      } catch (err) {
+        if (!isCancelled) {
+          setAndRefError(err.response?.data?.message || 'Failed to start analysis')
+        }
+      }
+    }
+
+    const checkStatus = async () => {
+      try {
+        const { data } = await api.get(`/sessions/${sessionId}`)
+        if (data.data.session.status === 'completed') {
+          if (!isCancelled) navigate('/dashboard')
+        } else if (data.data.session.status === 'failed') {
+          if (!isCancelled) setAndRefError('Analysis failed. Please try again.')
+        }
+      } catch (err) {
+        console.error('Status check error:', err)
+      }
+    }
+
+    triggerAnalysis().then(() => {
+      if (!isCancelled) {
+        intervalId = setInterval(() => {
+          if (!errorRef.current) checkStatus()
+        }, 3000)
+      }
+    })
     
-    return () => clearTimeout(timer)
-  }, [navigate])
+    return () => {
+      isCancelled = true
+      if (intervalId) clearInterval(intervalId)
+    }
+  }, [navigate, sessionId])
+  
+  if (error) {
+    return (
+      <div className="min-h-[calc(100vh-4rem)] flex flex-col items-center justify-center bg-brand-bg p-4">
+        <Card className="max-w-md w-full text-center p-12 space-y-6 shadow-xl border-danger/20">
+          <div className="text-6xl mb-4">⚠️</div>
+          <h1 className="text-2xl font-bold text-danger mb-2">Analysis Failed</h1>
+          <p className="text-brand-muted text-sm">{error}</p>
+          <button 
+            onClick={() => { setError(null); navigate('/dashboard') }}
+            className="mt-4 px-6 py-2 bg-primary text-white rounded-md font-medium"
+          >
+            Back to Dashboard
+          </button>
+        </Card>
+      </div>
+    )
+  }
   
   return (
     <div className="min-h-[calc(100vh-4rem)] flex flex-col items-center justify-center bg-brand-bg p-4">

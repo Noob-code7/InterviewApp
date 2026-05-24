@@ -1,4 +1,5 @@
 import os
+import asyncio
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
@@ -38,13 +39,16 @@ async def analyze_face(video: UploadFile = File(...)):
     if not video.content_type or not video.content_type.startswith("video/"):
         raise HTTPException(status_code=400, detail="File must be a video")
 
+    # Simulate model processing time (10 seconds)
+    await asyncio.sleep(10)
+
     # Placeholder — Phase 5 implements real DeepFace logic
     result = FaceAnalysisResult(
-        confidenceScore=0.0,
-        nervousnessScore=0.0,
-        attentionScore=0.0,
-        eyeContactScore=0.0,
-        notes=["Stub response — real analysis implemented in Phase 5"],
+        confidenceScore=85.5,
+        nervousnessScore=12.0,
+        attentionScore=92.5,
+        eyeContactScore=88.0,
+        notes=["Good eye contact.", "Maintained attention throughout."],
     )
     return {"success": True, "data": result.model_dump()}
 

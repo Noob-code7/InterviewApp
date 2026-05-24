@@ -1,0 +1,358 @@
+ 
+ Important Topics 
+Operating Systems: 
+Operating system functions, Different types of O.S.: batch, multi-programmed, 
+timesharing, real-time, distributed, parallel. 
+ I/O structure, storage structure, storage hierarchy, operating system structure 
+(simple, layered, virtual machine), O/S services, system calls. 
+Concept of processes, process scheduling, operations on processes, co-operating 
+processes, interprocess communication, context switching, process states 
+Threads overview, benefits of threads, user and kernel threads. 
+CPU scheduling : scheduling criteria, preemptive & non-preemptive scheduling, 
+scheduling algorithms (FCFS,SJF, RR, priority) 
+Process Synchronization: critical section, classical problems of synchronization, 
+semaphores. 
+Deadlocks: deadlock characterization, methods for handling deadlocks, deadlock 
+prevention, deadlock avoidance, deadlock detection, recovery from deadlock. 
+Memory Management : logical vs. physical address space, swapping, contiguous 
+memory allocation, paging, inverted page table, segmentation. 
+Virtual Memory: demand paging, page replacement, page replacement algorithms 
+(FCFS, LRU), Belady’s Anomoly, thrashing. 
+ 
+ 
+ 
+ 
+ 
+
+ 
+ Sample Questions for interview on Operating Systems: 
+1. What is IPC? What are the different IPC mechanisms? 
+2. What's the main purpose of an OS? What are the different types of OS? 
+3. What are the benefits of a multiprocessor system? 
+4. What is RAID structure in OS? What are the different levels of RAID 
+configuration? 
+5. What is GUI? 
+6. What is a Pipe and when it is used? 
+7. What are the different kinds of operations that are possible on semaphore? 
+8. What is a bootstrap program in OS? 
+9. Explain demand paging? 
+10. What do you mean by RTOS? 
+11. What do you mean by process synchronization? 
+12. Why is the operating system important? 
+13. What is different between main memory and secondary memory. 
+14. What do you mean by overlays in OS? 
+15. What is thrashing in OS? 
+16. What is the main objective of multiprogramming? 
+17. What do you mean by asymmetric clustering? 
+18. What is the difference between multitasking and multiprocessing OS? 
+19. What do you mean by Sockets in OS? 
+20. Explain zombie process? 
+21. What do you mean by cascading termination? 
+22. What is starvation and aging in OS? 
+23. What is the difference between paging and segmentation? 
+24. What is virtual memory? 
+25. What is thread in OS? 
+26. What is a process? What are the different states of a process? 
+27. What do you mean by FCFS? 
+28. What is Reentrancy? 
+29. What is a Scheduling Algorithm? Name different types of scheduling 
+algorithms. 
+
+ 
+ 30. What are different types of Kernel? 
+31. What do you mean by Semaphore in OS? Why is it used? 
+32. What is Kernel and write its main functions? 
+33. Write difference between micro kernel and monolithic kernel? 
+34. What is SMP (Symmetric Multiprocessing)? 
+35. What is a time-sharing system? 
+36. What is Context Switching? 
+37. What is difference between Kernel and OS? 
+38. What is difference between process and thread? 
+39. What are various sections of the process? 
+40. What is a deadlock in OS? What are the necessary conditions for a deadlock? 
+41. What do you mean by Belady’s Anomaly? 
+42. What is spooling in OS? 
+ 
+DBMS: 
+Overview of DBMS, Data Models, Database Languages, Three Schema 
+architecture of DBMS. Entity-Relationship Model [6L] Basic concepts, Design 
+Issues, Mapping Constraints, Keys, Entity-Relationship Diagram, Weak Entity Sets, 
+Structure of relational Databases, Relational Algebra, Relational Calculus, 
+Extended Relational Algebra Operations, Views, Modifications Of the Database.   
+SQL and Integrity Constraints, Concept of DDL, DML, DCL. Basic Structure, Set 
+operations, Aggregate Functions, Null Values, Domain Constraints, Referential 
+Integrity Constraints, assertions, views, Nested Subqueries,  Database security 
+application development using SQL, Stored procedures and triggers.  Functional 
+Dependency, Different anamolies in designing a Database., Normalization using 
+funtional dependencies, Decomposition, Boyce-Codd  Normal Form, 3NF, 
+Nomalization using multi-valued depedencies, 4NF, 5NF                                                
+Query optimization, joins 
+ 
+ 
+
+ 
+ Sample Questions for interview on DBMS: 
+1. What is the difference between inner join and outer join? 
+2. What is the definition of Integrity Constraints? 
+3. Define Primary key, Candidate key, Super Key, Alternate Key and Foreign 
+Key. 
+4. Why normalization is required in DBMS? 
+5. What is functional dependency?  
+6. What are the types of Functional dependency? Explain it. (Full, Partial, 
+Multivalved) 
+7. What is Amstrong Axioms? 
+8. What is the ACID property? 
+9. What is shadow paging? 
+10. Why BCNF is better than 3NF? 
+11. What is Weak Entity and Strong Entity? 
+12. What is Generalisation and Aggregation? 
+13. What is derived and Multi-valued attribute? 
+14. What is Null attribute? 
+15. What is the difference between Join and Union? 
+16. What are the Dangling Tuple and Spurious Tuple? 
+17. Which normal form is considered adequate for relational database design? 
+ 
+18. If every non key attribute is functionally dependent on the primary key, 
+then the relation will be in which normal form? 
+19. What are advantages of DBMS over traditional file based systems?  
+20. What are super, primary, candidate and foreign keys?  
+21. What is the difference between primary key and unique constraints?  
+22. What is database normalization?  
+23. What are the differences between DDL, DML and DCL in SQL?  
+24. What is a view in SQL? How to create one  
+25. What is the difference between Trigger and Stored Procedure?  
+26. What is a transaction? 
+27. Describe the three levels of data abstraction?  
+
+ 
+ 28. Define the "integrity rules"?  
+29. What is Data Independence?  
+30. What is Data Model?  
+31. What is an Entity?  
+32. What is degree of a Relation?  
+33. What is Relationship?  
+34. What is Functional Dependency?  
+35. What is Lossless join property?  
+36. What is Fully Functional dependency?  
+37. What is 2NF? Explain with example. 
+38. What is 3NF? Explain with example. 
+39. What is BCNF (Boyce-Codd Normal Form)? Explain with example. 
+40. What is 4NF? Explain with example. 
+41. What is 5NF? Explain with example. 
+42. What is Domain-Key Normal Form?  
+43. What do you mean by atomicity and aggregation?  
+44. What is a Phantom Deadlock?  
+45. What is normalization? 
+46. What is the difference between primary key and candidate key?? 
+47. What is meant by query optimization? 
+48. What is RDBMS KERNEL? 
+49. Describe concurrency control. 
+50. What is Data Independence? 
+51. What is a Phantom Deadlock? 
+52. Describe the three levels of data abstraction.  
+53. Differentiate between DBMS and RDBMS. 
+54. Differentiate between extension and intension. 
+55. Differentiate between Delete and Truncate table. 
+56. What is a materialized view? 
+57. What do you mean by Cluster and Non cluster Index? 
+58. What are B-trees? 
+59. What is the difference between primary key and unique constraints? 
+60. Do you think BCNF is better than 2NF & 3NF? Why? 
+
+ 
+ Software Engineering: 
+ 
+System Development Life Cycle, Waterfall Model, Spiral Model, Feasibility 
+Analysis, Technical Feasibility, Cost- Benefit Analysis, COCOMO model. Context 
+diagram and DFD, Problem Partitioning, Top-Down and Bottom-Up design, 
+Decision tree, decision table, Structured Programming, OO Programming, 
+Information Hiding, Reuse, System Documentation. Levels of Testing, Integration 
+Testing, Test case Specification, Reliability Assessment, Validation & Verification 
+Metrics, Monitoring & Control. Software Project Management – Project 
+Scheduling, Staffing, Software Configuration Management, Quality Assurance, 
+Project Monitoring. Fundamentals of Object Oriented design in UML, Static and 
+dynamic models, why modeling, UML diagrams: Class diagram, interaction 
+diagram: collaboration diagram, sequence diagram, state chart diagram, activity 
+diagram, implementation diagram. 
+ 
+Sample Questions on Software Engineering: 
+ 
+1. When you know programming, what is the need to learn software 
+engineering concepts? 
+2. What is SDLC? Which SDLC model is the best in your opinion? 
+3. What are software project estimation techniques available? 
+4. What is the difference between structured English and Pseudo Code? 
+5. What is the difference between function-oriented and object-oriented 
+design? 
+6. Differentiate validation and verification? 
+7. What is black-box and white-box testing? 
+8. What is software re-engineering? 
+9. What are CASE tools? 
+10. What is the difference cohesion and coupling? 
+11. What is alpha and beta testing? 
+12. Mention the categories of debugging approaches? 
+13. Mention some of the process models appropriate for the software to be 
+engineered? 
+
+ 
+ 14. What is the difference between software engineering and system 
+engineering? 
+15. What is software configuration model? 
+16.  What is bottom-up and top-down approach. 
+ 
+Computer Networking: 
+ 
+Direction of data flow (simplex, half duplex, full duplex); network criteria, physical 
+structure (type of connection, topology), categories of network (LAN, MAN,WAN); 
+OSI reference model, TCP/IP model. Data (analog & digital), Signal(analog & 
+digital), Transmission (analog & digital) & transmission media (guided & 
+unguided); Circuit switching: time division & space division switch, TDM, Data link 
+Layer,Types of errors, framing(character and bit stuffing), error detection & 
+correction methods, Flow control, Stop & wait ARQ, Go-Back- N ARQ, Selective 
+repeat ARQ, HDLC, Point to Point Protocol, LCP, NCP, Token Ring, Reservation, 
+Polling, Multiple access protocols: Pure ALOHA, Slotted ALOHA, CSMA, CSMA/CD, 
+CSMA/CA Traditional Ethernet, Repeaters, Hubs, Bridges, Switches, Router, 
+Gateway; Addressing : IP addressing, subnetting; Routing : techniques, static vs. 
+dynamic routing , Unicast Routing Protocols: RIP, OSPF, BGP; Other Procols: ARP, 
+IP, ICMP, IPV6, Process to Process delivery; UDP; TCP; Quality of service: 
+techniques to improve QoS: Leaky bucket algorithm, Token bucket algorithm, 
+DNS, SMTP, SNMP, FTP, HTTP & WWW 
+ 
+Sample Questions on Computer Networking: 
+ 
+1. What is Piggy Backing? 
+2. What is a gateway? What is a Router? 
+3. Explain RIP (Routing Information Protocol). 
+4. What is Hypertext Transfer Protocol (HTTP)? 
+5. What is difference between ARP and RARP? 
+6. What is difference between baseband and broadband transmission? 
+7. What is Kerberos? 
+8. What are different ways of securing a computer network? 
+
+ 
+ 9. What is traffic shaping? 
+10. What are the advantages of Distributed Processing? 
+11. Name the factors that affect the performance of the network? 
+12. Define the terms Unicasting, Multiccasting and Broadcasting? 
+13. What are the responsibilities of Data Link Layer? 
+14. What is usage of Sequence Number in Reliable Transmission? 
+15. Difference between bit rate and baud rate. 
+16. What is IP Address? 
+17. What is a private IP address? How is it different from a public IP address? 
+18. What is MAC Address? 
+19. What is Port Address? 
+20. What is the difference between Classfull Addressing and Classless 
+Addressing? 
+21. What is the difference between Hub and Switch? 
+22. What is the difference between TCP and IP? 
+23. What is the difference between GSM and CDMA? 
+24. What is subnet mask? 
+25. What is the job of the Network Layer under the OSI reference model? 
+26. What is DHCP? 
+27. What is the difference between CSMA/CD and CSMA/CA? 
+28. What is RSA algorithm? 
+29. What is point to point link? 
+30. What is topology? Explain different types topologies mentioning their 
+advantages and disadvantages. 
+31. Different layers of OSI and TCP/IP model and their functions. 
+32. What are the different Transmission modes? 
+33. What do you mean by data transparency problem? How bit stuffing solve 
+this problem?  
+34. Define the terms Unicasting, Multicasting and Broadcasting? 
+35. Explain the concept of redundancy related to error detection and error 
+correction. 
+36. How does CRC and Checksum work? 
+
+ 
+ 37. What is the relation between number of redundant bits and number of 
+data bits in case of hamming code technique? 
+38. Compare between  (i) stop and wait protocol and sliding window protocol 
+(ii) Go back N and selective repeat ARQ  (iii) Circuit switching and packet 
+switching  (iv) Pure Aloha and Slotted Aloha (v) CSMA/CD and CSMA/CA  (vi) 
+Static IP and Dynamic IP  (vii) TCP and UDP      (viii) Hub and Switch. 
+39.  What is MAC address? How it is differ from logical address. 
+40. What are IP address and their classes? Purpose of classless addressing. 
+41. What is sub netting?  Explain default mask and subnet mask. 
+42. What is Routing? Compare dynamic routing and static routing. 
+43. What do you mean by interior and exterior routing protocol? Give 
+examples of both. 
+ 
+Object Oriented Programming using Java: 
+ 
+Object, Class, relationships among objects, aggregation, links, relationships 
+among classes-association, aggregation, using, instantiation, meta-class, grouping 
+constructs. Object oriented concepts, Difference between OOP and other 
+conventional programming – advantages and disadvantages. Class, object, 
+message passing, inheritance, encapsulation, polymorphism  
+ 
+Sample Questions on OOP: 
+ 
+1. What is data encapsulation, and why is it useful? 
+2. What is polymorphism? 
+3. What are the types of polymorphism, and how do they differ? 
+4. What does an interface in Java refer to? 
+5. What are constructors in Java? 
+6. Name and explain the types of constructors in Java. 
+7.  What is JDK? 
+8.  What is JVM? 
+9.  What is JRE? 
+10.  In Java, what are the differences between heap and stack memory? 
+
+ 
+ 11.  What is a JIT compiler? 
+12.  How does a JIT compiler differ from a standard compiler? 
+13.  What is an inner class? 
+14.  What is a subclass? 
+15.  What is a package in Java? 
+16.  How can developers use packages in Java? 
+17.  What are the advantages of packages in Java? 
+18. Java class, variable, objects, and argument questions 
+19.  What is a class in Java? 
+20.  What are the different types of variables in Java? 
+21.  How do you use a method in Java? 
+22.  What is a Java object? 
+23.  What is a singleton class, and how can it be used? 
+24.  What is a constructor in Java? 
+25.  What does the term constructor overloading mean? 
+26.  How are non-primitive variables used in Java? 
+27.  In Java, what is a static variable? 
+28.  What are Java data types, and how are they grouped? 
+29.  How do you define primitive data types and describe each by size and 
+description? 
+30.  What do the terms autoboxing and unboxing mean in Java? 
+31.  What are wrapper classes in Java? 
+32.  In Java, what are the differences between methods and constructors? 
+33.  Can you override a private method or static method in Java? 
+34.  What is method hiding? 
+35.  What is the difference between equals() and == in Java? 
+36.  Can you write multiple catch blocks under a single try block? 
+ 
+Data Structures: 
+ 
+Why we need data structure?  Difference between Abstract Data Type and 
+Primitive Data Type.   Algorithm efficiency and analysis, time and space analysis of 
+algorithms, Different representations – row major, column major.  Sparse matrix - 
+
+ 
+ its implementation and usage. Array representation of polynomials, Linked List -- 
+Singly linked list, circular linked list, doubly linked list, linked list representation of 
+polynomial and applications. Stack and its implementations (using array, using 
+linked list), applications. Queue, circular queue, dequeue. Implementation of 
+queue- both linear and circular (using array, using linked list), applications. 
+Principles of recursion – use of stack, differences between recursion and iteration, 
+tail recursion. Applications  - The Tower of Hanoi, Eight Queens Puzzle. Nonlinear 
+Data structures : forest, tree representation (using array, using linked list).  Binary 
+trees - binary tree traversal (pre-, in-, post- order), threaded binary tree (left, 
+right, full) - non-recursive traversal algorithms using threaded binary tree, 
+expression tree. Binary search tree- operations (creation, insertion, deletion, 
+searching). Height balanced binary tree – AVL tree (insertion, deletion with 
+examples only). B- Trees – operations (insertion, deletion with examples only). 
+Graph definitions and concepts (directed/undirected graph, weighted/un-
+weighted edges, sub-graph, degree, cutvertex/articulation point, pendant node, 
+clique, complete graph, connected components – strongly connected component, 
+weakly connected component, path, shortest path, isomorphism). Graph 
+representations/storage implementations – adjacency matrix, adjacency list, 
+adjacency multi-list. Graph traversal and connectivity – Depth-first search (DFS), 
+Breadth-first search (BFS) – concepts of edges used in DFS and BFS (tree-edge, 
+back-edge, cross-edge, forward-edge), applications.  Minimal spanning tree – 
+Prim’s algorithm (basic idea of greedy methods). 

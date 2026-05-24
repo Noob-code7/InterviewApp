@@ -74,6 +74,11 @@ const sessionSchema = new mongoose.Schema(
       enum: ['setup', 'in-progress', 'processing', 'completed', 'failed'],
       default: 'setup',
     },
+    jobStatus: {
+      type: String,
+      enum: ['queued', 'processing', 'completed', 'failed', null],
+      default: null,
+    },
     startedAt:    { type: Date },
     completedAt:  { type: Date },
     answers:      { type: [answerSchema], default: [] },

@@ -1,4 +1,5 @@
 import os
+import asyncio
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
@@ -20,7 +21,6 @@ class VoiceAnalysisResult(BaseModel):
     transcript: str
     confidenceScore: float
     fluencyScore: float
-    nervousnessScore: float
     fillerWordCount: int
     speakingSpeed: float  # words per minute
     clarityScore: float
@@ -44,15 +44,17 @@ async def analyze_voice(audio: UploadFile = File(...)):
             detail=f"Unsupported audio format: {audio.content_type}"
         )
 
+    # Simulate model processing time (10 seconds)
+    await asyncio.sleep(10)
+
     # Placeholder — Phase 5 implements real Whisper + Librosa logic
     result = VoiceAnalysisResult(
-        transcript="Stub transcript — real Whisper transcription in Phase 5",
-        confidenceScore=0.0,
-        fluencyScore=0.0,
-        nervousnessScore=0.0,
-        fillerWordCount=0,
-        speakingSpeed=0.0,
-        clarityScore=0.0,
+        transcript="This is a placeholder transcript demonstrating the speech. Um, I think it went well.",
+        confidenceScore=82.0,
+        fluencyScore=78.5,
+        fillerWordCount=2,
+        speakingSpeed=145.0,
+        clarityScore=89.5,
     )
     return {"success": True, "data": result.model_dump()}
 

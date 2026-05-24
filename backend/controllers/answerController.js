@@ -1,20 +1,41 @@
 import Session from '../models/Session.js'
 import { sendSuccess, sendError } from '../utils/response.js'
+import storage from '../services/storage.js'
 
 // ── POST /api/sessions/:sessionId/answers/:questionId ───────────────────────
 export const uploadAnswer = async (req, res) => {
   try {
     const { sessionId, questionId } = req.params
 
-    if (!req.file) {
+    if (!req.file || !req.file.buffer) {
       return sendError(res, 'No video file uploaded', 400)
     }
 
-    // In local dev, multer saves the file to /uploads. 
-    // The path will be accessible via /uploads/filename
-    const videoUrl = `/uploads/${req.file.filename}`
-    // We assume the same file contains both audio and video (webm)
-    const audioUrl = videoUrl 
+    // Validate mimetype
+    const allowed = [
+      'video/webm',
+      'audio/webm',
+      'video/mp4',
+      'audio/mpeg',
+      'audio/wav',
+    ]
+    if (req.file.mimetype && !allowed.includes(req.file.mimetype)) {
+      return sendError(res, 'Unsupported media type', 415)
+    }
+
+    // Build an S3 key and upload the buffer
+    const filename = req.file.originalname || `answer.webm`
+    const key = storage.makeKeyForAnswer(sessionId, filename)
+    let uploadRes
+    try {
+      uploadRes = await storage.uploadBuffer(req.file.buffer, key, req.file.mimetype || 'video/webm')
+    } catch (err) {
+      console.error('S3 upload failed:', err)
+      return sendError(res, 'Failed to store uploaded file', 500)
+    }
+
+    const videoUrl = uploadRes.url
+    const audioUrl = videoUrl
 
     const session = await Session.findOne({ _id: sessionId, userId: req.user._id })
     if (!session) return sendError(res, 'Session not found', 404)
