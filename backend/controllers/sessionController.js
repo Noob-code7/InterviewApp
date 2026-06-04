@@ -1,20 +1,49 @@
+import fs from 'fs'
+import path from 'path'
+import { fileURLToPath } from 'url'
 import Session from '../models/Session.js'
 import { sendSuccess, sendError } from '../utils/response.js'
+
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = path.dirname(__filename)
+const uploadsDir = path.resolve(__dirname, '../uploads')
 
 // ── POST /api/sessions ────────────────────────────────────────────────────────
 export const createSession = async (req, res) => {
   try {
-    const { role, interviewType, questionCount } = req.body
+    const { role, interviewType, questionCount, referenceImage } = req.body
     if (!role || !interviewType) {
       return sendError(res, 'role and interviewType are required', 400)
     }
-    const session = await Session.create({
+
+    const session = new Session({
       userId: req.user._id,
       role,
       interviewType,
       questionCount: questionCount || 5,
       status: 'setup',
     })
+
+    // If a reference image is provided (base64 string), save it
+    if (referenceImage) {
+      const matches = referenceImage.match(/^data:image\/([A-Za-z-+\/]+);base64,(.+)$/)
+      if (matches && matches.length === 3) {
+        const extension = matches[1] === 'jpeg' ? 'jpg' : matches[1]
+        const imageBuffer = Buffer.from(matches[2], 'base64')
+        const filename = `${session._id}-ref.${extension}`
+        const filePath = path.join(uploadsDir, filename)
+        
+        // Ensure uploads directory exists
+        if (!fs.existsSync(uploadsDir)) {
+          fs.mkdirSync(uploadsDir, { recursive: true })
+        }
+        
+        fs.writeFileSync(filePath, imageBuffer)
+        session.referenceImageUrl = `/uploads/${filename}`
+      }
+    }
+
+    await session.save()
     return sendSuccess(res, { session }, 201)
   } catch (err) {
     return sendError(res, err.message, 500)

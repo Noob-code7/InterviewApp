@@ -74,6 +74,11 @@ const sessionSchema = new mongoose.Schema(
       enum: ['setup', 'in-progress', 'processing', 'completed', 'failed'],
       default: 'setup',
     },
+    jobStatus: {
+      type: String,
+      enum: ['queued', 'processing', 'completed', 'failed', null],
+      default: null,
+    },
     startedAt:    { type: Date },
     completedAt:  { type: Date },
     answers:      { type: [answerSchema], default: [] },
@@ -93,6 +98,9 @@ const sessionSchema = new mongoose.Schema(
     // Report — Phase 7
     reportUrl:   { type: String, default: '' },
     reportData:  { type: mongoose.Schema.Types.Mixed, default: null },
+    // Face verification
+    referenceImageUrl: { type: String, default: '' },
+    faceSubstitutionAlert: { type: Boolean, default: false },
   },
   { timestamps: true, toJSON: { virtuals: true }, toObject: { virtuals: true } }
 )

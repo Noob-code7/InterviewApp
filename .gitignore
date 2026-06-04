@@ -30,3 +30,6 @@ Thumbs.db
 # Docker volumes
 mongo-data/
 redis-data/
+
+# Local uploads (do not commit user media files)
+backend/uploads/
