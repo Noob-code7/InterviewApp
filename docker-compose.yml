@@ -64,9 +64,16 @@ services:
     build:
       context: ./ai-services/voice-service
       dockerfile: Dockerfile
+      args:
+        SER_MODEL_URL: ${SER_MODEL_URL:-}
+        SER_MODEL_SHA256: ${SER_MODEL_SHA256:-}
     container_name: interview_voice
     ports:
       - "8002:8002"
+    environment:
+      SER_MODEL_PATH: /app/SER_model/best_model_path.pth
+      SER_MODEL_URL: ${SER_MODEL_URL:-}
+      SER_MODEL_SHA256: ${SER_MODEL_SHA256:-}
     env_file:
       - ./ai-services/voice-service/.env
     restart: unless-stopped

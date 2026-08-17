@@ -1,5 +1,8 @@
 import os
 import tempfile
+import hashlib
+import urllib.request
+import pathlib
 import torch
 import numpy as np
 import soundfile as sf
@@ -39,6 +42,24 @@ whisper_stt_model = None
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
+def ensure_ser_model(model_path: str):
+    if os.path.exists(model_path):
+        return model_path
+    url = os.getenv("SER_MODEL_URL")
+    expected = os.getenv("SER_MODEL_SHA256", "").strip().lower()
+    if not url:
+        return None
+    os.makedirs(os.path.dirname(model_path), exist_ok=True)
+    tmp = model_path + ".part"
+    urllib.request.urlretrieve(url, tmp)
+    if expected and hashlib.sha256(pathlib.Path(tmp).read_bytes()).hexdigest() != expected:
+        os.remove(tmp)
+        print("[Voice Service] SER model checksum mismatch - refusing to load.")
+        return None
+    os.replace(tmp, model_path)
+    return model_path
+
+
 @app.on_event("startup")
 def load_models():
     global model, whisper_stt_model
@@ -61,7 +82,21 @@ def load_models():
         except Exception as e:
             print(f"[Voice Service] Warning: Failed to load SER model: {e}")
     else:
-        print(f"[Voice Service] Warning: SER Model file not found at {model_path}")
+        fetched = ensure_ser_model(model_path)
+        if fetched and os.path.exists(fetched):
+            try:
+                print(f"[Voice Service] Downloaded SER model to {fetched}...")
+                model_inst = Speech_emotion()
+                state_dict = torch.load(fetched, map_location=device)
+                model_inst.load_state_dict(state_dict, strict=True)
+                model_inst.to(device)
+                model_inst.eval()
+                model = model_inst
+                print("[Voice Service] SER model loaded successfully!")
+            except Exception as e:
+                print(f"[Voice Service] Warning: Failed to load downloaded SER model: {e}")
+        else:
+            print(f"[Voice Service] Warning: SER Model file not found at {model_path}")
 
     # 2. Load Faster-Whisper Speech-To-Text (STT) model
     try:
