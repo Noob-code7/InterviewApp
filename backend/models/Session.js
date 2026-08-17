@@ -34,10 +34,15 @@ const voiceAnalysisSchema = new mongoose.Schema({
 
 const nlpAnalysisSchema = new mongoose.Schema({
   relevanceScore:    { type: Number, default: null },
+  correctnessScore:  { type: Number, default: null },
+  completenessScore: { type: Number, default: null },
+  communicationScore: { type: Number, default: null },
   structureScore:    { type: Number, default: null },
   grammarScore:      { type: Number, default: null },
-  completenessScore: { type: Number, default: null },
+  overallScore:      { type: Number, default: null },
   feedback:          { type: String, default: '' },
+  strengths:         { type: [String], default: [] },
+  improvements:      { type: [String], default: [] },
 }, { _id: false })
 
 // ── Per-answer sub-schema ────────────────────────────────────────────────────
@@ -62,6 +67,11 @@ const sessionSchema = new mongoose.Schema(
       required: true,
       index: true,
     },
+    // Student candidate identification
+    candidateName: { type: String, default: '' },
+    department:    { type: String, default: '' },
+    rollNo:        { type: String, default: '' },
+    graduationYear:{ type: String, default: '' },
     role:           { type: String, required: [true, 'Role is required'], trim: true },
     interviewType:  {
       type: String,
@@ -91,11 +101,16 @@ const sessionSchema = new mongoose.Schema(
       enum: ['low', 'medium', 'high', 'market-ready', null],
       default: null,
     },
-    // Writing test — Phase 6
+    // Writing test & Drive settings
+    includeWritingTest: { type: Boolean, default: true },
+    driveCode:          { type: String, default: '' },
     writingTask:        { type: String, default: '' },
     writingSubmission:  { type: String, default: '' },
     writingAnalysis:    { type: mongoose.Schema.Types.Mixed, default: null },
-    // Report — Phase 7
+    // Resume Based Mode — Phase 8
+    resumeUrl:          { type: String, default: '' },
+    resumeText:         { type: String, default: '' },
+    // Report
     reportUrl:   { type: String, default: '' },
     reportData:  { type: mongoose.Schema.Types.Mixed, default: null },
     // Face verification

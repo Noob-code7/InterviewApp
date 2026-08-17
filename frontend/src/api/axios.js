@@ -23,13 +23,29 @@ const processQueue = (error, token = null) => {
   refreshQueue = []
 }
 
+const safeRedirectToLogin = () => {
+  localStorage.removeItem('accessToken')
+  if (
+    typeof window !== 'undefined' &&
+    window.location.pathname !== '/login' &&
+    window.location.pathname !== '/register'
+  ) {
+    window.location.href = '/login'
+  }
+}
+
 api.interceptors.response.use(
   (response) => response,
   async (error) => {
     const original = error.config
 
-    if (error.response?.status === 401 && !original._retry) {
-      // If already refreshing, queue this request
+    if (!original) {
+      return Promise.reject(error)
+    }
+
+    const isAuthEndpoint = original.url?.includes('/api/auth/')
+
+    if (error.response?.status === 401 && !original._retry && !isAuthEndpoint) {
       if (isRefreshing) {
         return new Promise((resolve, reject) => {
           refreshQueue.push({ resolve, reject })
@@ -54,12 +70,16 @@ api.interceptors.response.use(
         }
       } catch (refreshError) {
         processQueue(refreshError, null)
-        localStorage.removeItem('accessToken')
-        window.location.href = '/login'
+        safeRedirectToLogin()
         return Promise.reject(refreshError)
       } finally {
         isRefreshing = false
       }
+    }
+
+    // If auth endpoint itself returned 401, safely handle login redirect without looping
+    if (error.response?.status === 401 && isAuthEndpoint) {
+      safeRedirectToLogin()
     }
 
     return Promise.reject(error)

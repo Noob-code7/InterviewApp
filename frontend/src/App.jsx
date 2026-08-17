@@ -1,27 +1,21 @@
-import { Routes, Route } from "react-router-dom";
+import { Routes, Route, Navigate } from "react-router-dom";
 import Navbar from "./components/layout/Navbar.jsx";
 import ProtectedRoute from "./components/layout/ProtectedRoute.jsx";
 import LandingPage from "./pages/LandingPage.jsx";
 import LoginPage from "./pages/LoginPage.jsx";
 import RegisterPage from "./pages/RegisterPage.jsx";
-import DashboardPage from "./pages/DashboardPage.jsx";
 import InterviewSetupPage from "./pages/InterviewSetupPage.jsx";
 import LiveInterviewPage from "./pages/LiveInterviewPage.jsx";
 import ProcessingPage from "./pages/ProcessingPage.jsx";
 import AdminQuestionsPage from "./pages/AdminQuestionsPage.jsx";
+import WritingTestPage from "./pages/WritingTestPage.jsx";
+import ReportPage from "./pages/ReportPage.jsx";
+import HistoryPage from "./pages/HistoryPage.jsx";
+import ProfilePage from "./pages/ProfilePage.jsx";
 
-// ── Placeholder for pages built in future phases ──────────────────────────────
-const Placeholder = ({ name }) => (
-  <div className="min-h-[calc(100vh-4rem)] flex items-center justify-center bg-brand-bg">
-    <div className="card p-12 text-center max-w-sm w-full mx-4">
-      <div className="w-12 h-12 rounded-full bg-primary-light flex items-center justify-center mx-auto mb-4">
-        <span className="text-2xl">🚧</span>
-      </div>
-      <h1 className="text-xl font-bold text-brand-text mb-2">{name}</h1>
-      <p className="text-sm text-brand-muted">Coming in a future phase</p>
-    </div>
-  </div>
-);
+import FacultyHubPage from "./pages/FacultyHubPage.jsx";
+import FacultyDashboardPage from "./pages/FacultyDashboardPage.jsx";
+import FacultyReportsPage from "./pages/FacultyReportsPage.jsx";
 
 // ── Layout wrapper: page with top Navbar ──────────────────────────────────────
 const WithNavbar = ({ children }) => (
@@ -35,22 +29,22 @@ const WithNavbar = ({ children }) => (
 function App() {
   return (
     <Routes>
-      {/* Public routes — no Navbar */}
-      <Route path="/" element={<LandingPage />} />
+      {/* Primary Home — Landing & Authenticated Hub */}
+      <Route
+        path="/"
+        element={
+          <WithNavbar>
+            <LandingPage />
+          </WithNavbar>
+        }
+      />
       <Route path="/login" element={<LoginPage />} />
       <Route path="/register" element={<RegisterPage />} />
 
-      {/* Protected routes — with Navbar */}
-      <Route
-        path="/dashboard"
-        element={
-          <ProtectedRoute>
-            <WithNavbar>
-              <DashboardPage />
-            </WithNavbar>
-          </ProtectedRoute>
-        }
-      />
+      {/* Redirect old /dashboard route to new primary Home */}
+      <Route path="/dashboard" element={<Navigate to="/" replace />} />
+
+      {/* Protected features */}
       <Route
         path="/interview/setup"
         element={
@@ -73,7 +67,19 @@ function App() {
         path="/interview/writing/:sessionId"
         element={
           <ProtectedRoute>
-            <Placeholder name="Writing Test" />
+            <WithNavbar>
+              <WritingTestPage />
+            </WithNavbar>
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/faculty"
+        element={
+          <ProtectedRoute>
+            <WithNavbar>
+              <FacultyHubPage />
+            </WithNavbar>
           </ProtectedRoute>
         }
       />
@@ -82,7 +88,27 @@ function App() {
         element={
           <ProtectedRoute>
             <WithNavbar>
-              <AdminQuestionsPage />
+              <FacultyDashboardPage />
+            </WithNavbar>
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/faculty/dashboard"
+        element={
+          <ProtectedRoute>
+            <WithNavbar>
+              <FacultyDashboardPage />
+            </WithNavbar>
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/faculty/reports"
+        element={
+          <ProtectedRoute>
+            <WithNavbar>
+              <FacultyReportsPage />
             </WithNavbar>
           </ProtectedRoute>
         }
@@ -102,7 +128,7 @@ function App() {
         element={
           <ProtectedRoute>
             <WithNavbar>
-              <Placeholder name="Interview Report" />
+              <ReportPage />
             </WithNavbar>
           </ProtectedRoute>
         }
@@ -112,7 +138,7 @@ function App() {
         element={
           <ProtectedRoute>
             <WithNavbar>
-              <Placeholder name="History" />
+              <HistoryPage />
             </WithNavbar>
           </ProtectedRoute>
         }
@@ -122,7 +148,7 @@ function App() {
         element={
           <ProtectedRoute>
             <WithNavbar>
-              <Placeholder name="Profile" />
+              <ProfilePage />
             </WithNavbar>
           </ProtectedRoute>
         }
@@ -133,12 +159,12 @@ function App() {
         path="*"
         element={
           <WithNavbar>
-            <div className="min-h-[calc(100vh-4rem)] flex items-center justify-center bg-brand-bg">
-              <div className="card p-12 text-center max-w-sm w-full mx-4">
-                <h1 className="text-6xl font-extrabold text-primary mb-4">
+            <div className="min-h-[calc(100vh-4rem)] flex items-center justify-center bg-[#F6F5F0]">
+              <div className="bg-white border border-[#E0DFD9] rounded-2xl p-12 text-center max-w-sm w-full mx-4 shadow-sm">
+                <h1 className="text-6xl font-extrabold text-[#111110] mb-4">
                   404
                 </h1>
-                <p className="text-brand-muted">Page not found.</p>
+                <p className="text-sm text-[#111110]/60">Page not found.</p>
               </div>
             </div>
           </WithNavbar>

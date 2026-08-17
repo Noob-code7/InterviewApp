@@ -48,6 +48,43 @@ export const createQuestion = async (req, res) => {
   }
 };
 
+// POST /api/admin/questions/bulk
+export const bulkCreateQuestions = async (req, res) => {
+  try {
+    const { questions } = req.body;
+    if (!Array.isArray(questions) || questions.length === 0) {
+      return sendError(res, "questions must be a non-empty array", 400);
+    }
+
+    const defaultCollege = req.user?.college || null;
+    const formatted = questions.map((q) => ({
+      questionText: q.questionText || q.question || "",
+      referenceAnswer: q.referenceAnswer || q.answer || "",
+      keywords: Array.isArray(q.keywords)
+        ? q.keywords
+        : typeof q.keywords === "string"
+        ? q.keywords.split(",").map((s) => s.trim()).filter(Boolean)
+        : [],
+      college: q.college || defaultCollege,
+      tags: Array.isArray(q.tags)
+        ? q.tags
+        : typeof q.tags === "string"
+        ? q.tags.split(",").map((s) => s.trim()).filter(Boolean)
+        : ["technical"],
+      createdBy: req.user?._id,
+    })).filter((q) => Boolean(q.questionText));
+
+    if (formatted.length === 0) {
+      return sendError(res, "No valid questions found in payload", 400);
+    }
+
+    const created = await Question.insertMany(formatted);
+    return sendSuccess(res, { count: created.length, questions: created }, 201);
+  } catch (err) {
+    return sendError(res, err.message, 500);
+  }
+};
+
 // GET /api/admin/questions?college=xyz
 export const listQuestions = async (req, res) => {
   try {
@@ -55,6 +92,7 @@ export const listQuestions = async (req, res) => {
     const filter = {};
     if (college) filter.college = college;
     if (q) filter.questionText = { $regex: q, $options: "i" };
+
     const items = await Question.find(filter)
       .sort({ createdAt: -1 })
       .limit(500);

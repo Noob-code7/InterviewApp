@@ -19,7 +19,7 @@ export default function RegisterPage() {
   const [loading, setLoading] = useState(false)
 
   useEffect(() => {
-    if (isAuthenticated) navigate('/dashboard', { replace: true })
+    if (isAuthenticated) navigate('/', { replace: true })
   }, [isAuthenticated, navigate])
 
   const update = (field) => (e) => {
@@ -61,7 +61,7 @@ export default function RegisterPage() {
       const { accessToken, user } = data.data
       localStorage.setItem('accessToken', accessToken)
       setAuth(user, accessToken)
-      navigate('/dashboard', { replace: true })
+      navigate('/', { replace: true })
     } catch (err) {
       setServerError(err.response?.data?.error || 'Registration failed. Please try again.')
       setStep(1)

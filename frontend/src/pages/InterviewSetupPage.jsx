@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { sessionsApi } from '../api/sessions.js'
+import api from '../api/axios.js'
 import { Button, Input, Card } from '../components/ui/index.js'
 
 const INTERVIEW_TYPES = [
@@ -19,12 +20,21 @@ export default function InterviewSetupPage() {
   // Step 1
   const [interviewType, setInterviewType] = useState(state?.type || '')
   
-  // Step 2
+  // Step 2: Student Identification & Role
+  const [candidateName, setCandidateName] = useState('')
+  const [department, setDepartment] = useState('Computer Science')
+  const [rollNo, setRollNo] = useState('')
+  const [graduationYear, setGraduationYear] = useState('2026')
   const [role, setRole] = useState('')
   const [questionCount, setQuestionCount] = useState(5)
   const [company, setCompany] = useState('')
+
+  // Resume Mode state
+  const [resumeFile, setResumeFile] = useState(null)
+  const [resumeText, setResumeText] = useState('')
+  const [resumeStatus, setResumeStatus] = useState('')
   
-  // Step 3
+  // Step 3: Equipment Check
   const [permissionGranted, setPermissionGranted] = useState(false)
   const [permissionError, setPermissionError] = useState('')
   const [creating, setCreating] = useState(false)
@@ -46,7 +56,32 @@ export default function InterviewSetupPage() {
 
   const handleStep2 = (e) => {
     e.preventDefault()
-    if (role.trim()) setStep(3)
+    if (role.trim() && candidateName.trim()) setStep(3)
+  }
+
+  const handleResumeFileUpload = async (e) => {
+    const file = e.target.files[0]
+    if (!file) return
+
+    setResumeFile(file)
+    setResumeStatus(`Parsing ${file.name}...`)
+
+    try {
+      const formData = new FormData()
+      formData.append("resume", file)
+      formData.append("role", role || "Software Engineer")
+      formData.append("count", questionCount || 5)
+
+      const { data } = await api.post("/api/sessions/parse-resume", formData)
+
+      const extracted = data.data?.extractedText || ""
+      setResumeText(extracted)
+      setResumeStatus(`✓ Parsed ${file.name} successfully (${extracted.length} characters extracted)`)
+    } catch (err) {
+      console.error("Resume backend parsing error:", err.response?.data || err.message)
+      setResumeStatus(`⚠️ Failed to parse ${file.name}: ${err.response?.data?.error || err.message}`)
+      setResumeText(`Candidate resume file: ${file.name}`)
+    }
   }
 
   const requestPermissions = async () => {
@@ -72,7 +107,6 @@ export default function InterviewSetupPage() {
         canvas.width = videoRef.current.videoWidth;
         canvas.height = videoRef.current.videoHeight;
         const ctx = canvas.getContext('2d');
-        // Handle mirroring because the video has scale-x-[-1]
         ctx.translate(canvas.width, 0);
         ctx.scale(-1, 1);
         ctx.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
@@ -80,10 +114,15 @@ export default function InterviewSetupPage() {
       }
 
       const { data } = await sessionsApi.create({ 
+        candidateName: candidateName.trim(),
+        department: department.trim(),
+        rollNo: rollNo.trim(),
+        graduationYear: graduationYear.trim(),
         role: interviewType === 'company' && company.trim() ? `${company} - ${role}` : role, 
         interviewType, 
         questionCount,
-        referenceImage
+        referenceImage,
+        resumeText: resumeText || `${role} Candidate Resume Background`
       })
       navigate(`/interview/live/${data.data.session._id}`)
     } catch (err) {
@@ -99,55 +138,51 @@ export default function InterviewSetupPage() {
         {/* Header & Step Indicator */}
         <div className="mb-8">
           <button 
-            onClick={() => step > 1 ? setStep(step - 1) : navigate('/dashboard')}
+            onClick={() => step > 1 ? setStep(step - 1) : navigate('/')}
             className="text-brand-muted hover:text-brand-text mb-6 flex items-center gap-1 text-sm font-medium transition-colors"
           >
-            ← {step > 1 ? 'Back' : 'Back to Dashboard'}
+            ← {step > 1 ? 'Back' : 'Back to Home'}
           </button>
           
           <h1 className="text-3xl font-bold text-brand-text mb-2">Configure Your Session</h1>
           <p className="text-brand-muted">Customize your mock interview experience.</p>
           
-          <div className="flex items-center gap-2 mt-6">
-            {[1, 2, 3].map((s) => (
-              <div
-                key={s}
-                className={`flex-1 h-1.5 rounded-full transition-all duration-300 ${
-                  s < step ? 'bg-primary' : s === step ? 'bg-primary/50' : 'bg-gray-200'
+          <div className="flex gap-2 mt-6">
+            {[1, 2, 3].map(i => (
+              <div 
+                key={i} 
+                className={`h-1.5 flex-1 rounded-full transition-colors ${
+                  i <= step ? 'bg-primary' : 'bg-white/10'
                 }`}
               />
             ))}
           </div>
         </div>
 
-        {/* Step 1: Interview Type */}
+        {/* Step 1: Type Selection */}
         {step === 1 && (
-          <div className="animate-fade-in">
-            <h2 className="text-xl font-semibold mb-4 text-brand-text">1. Select Interview Type</h2>
-            <div className="grid sm:grid-cols-2 gap-4 mb-8">
-              {INTERVIEW_TYPES.map(({ id, label, desc, icon }) => (
-                <button
-                  key={id}
-                  onClick={() => setInterviewType(id)}
-                  className={`card p-5 flex items-start gap-4 text-left transition-all active:scale-[0.99] ${
-                    interviewType === id 
-                      ? 'border-primary ring-1 ring-primary shadow-md bg-primary-light/10' 
-                      : 'hover:border-primary/50 hover:shadow-sm'
+          <div className="animate-fade-in space-y-6">
+            <h2 className="text-xl font-semibold text-brand-text">1. Select Interview Format</h2>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {INTERVIEW_TYPES.map((type) => (
+                <Card
+                  key={type.id}
+                  hover
+                  onClick={() => setInterviewType(type.id)}
+                  className={`cursor-pointer transition-all ${
+                    interviewType === type.id
+                      ? 'border-primary shadow-md ring-2 ring-primary/20 bg-primary/5'
+                      : 'hover:border-primary/50'
                   }`}
                 >
-                  <div className={`w-10 h-10 rounded-lg flex items-center justify-center text-xl shrink-0 transition-colors ${
-                    interviewType === id ? 'bg-primary text-white' : 'bg-brand-bg text-brand-text'
-                  }`}>
-                    {icon}
-                  </div>
-                  <div>
-                    <h3 className={`font-semibold mb-1 ${interviewType === id ? 'text-primary-dark' : 'text-brand-text'}`}>{label}</h3>
-                    <p className="text-sm text-brand-muted">{desc}</p>
-                  </div>
-                </button>
+                  <div className="text-3xl mb-3">{type.icon}</div>
+                  <h3 className="font-semibold text-brand-text mb-1">{type.label}</h3>
+                  <p className="text-xs text-brand-muted">{type.desc}</p>
+                </Card>
               ))}
             </div>
-            <div className="flex justify-end">
+            
+            <div className="flex justify-end pt-4">
               <Button size="lg" onClick={handleStep1} disabled={!interviewType}>
                 Continue →
               </Button>
@@ -155,33 +190,132 @@ export default function InterviewSetupPage() {
           </div>
         )}
 
-        {/* Step 2: Role & Questions */}
+        {/* Step 2: Student Identification & Target Role */}
         {step === 2 && (
           <form onSubmit={handleStep2} className="animate-fade-in space-y-6">
-            <h2 className="text-xl font-semibold text-brand-text">2. Target Role & Format</h2>
+            <h2 className="text-xl font-semibold text-brand-text">2. Student Identification & Target Role</h2>
             
-            <Card className="space-y-6">
+            <Card className="space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <Input
+                  label="Candidate Full Name *"
+                  placeholder="e.g. Rahul Sharma"
+                  value={candidateName}
+                  onChange={(e) => setCandidateName(e.target.value)}
+                  required
+                />
+                
+                <Input
+                  label="Roll Number / Student ID *"
+                  placeholder="e.g. 21CS045"
+                  value={rollNo}
+                  onChange={(e) => setRollNo(e.target.value)}
+                  required
+                />
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="text-xs font-semibold text-[#6E6D68] uppercase tracking-wider block mb-1">
+                    Department / Branch
+                  </label>
+                  <select
+                    value={department}
+                    onChange={(e) => setDepartment(e.target.value)}
+                    className="w-full p-3 rounded-xl border border-[#E2DFD8] bg-[#FAF9F5] text-sm focus:outline-none focus:border-primary"
+                  >
+                    <option value="Computer Science">Computer Science & Engineering</option>
+                    <option value="Information Technology">Information Technology</option>
+                    <option value="Electronics & Comm">Electronics & Comm (ECE)</option>
+                    <option value="Electrical Engineering">Electrical Engineering (EEE)</option>
+                    <option value="Mechanical Engineering">Mechanical Engineering</option>
+                    <option value="Other">Other</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="text-xs font-semibold text-[#6E6D68] uppercase tracking-wider block mb-1">
+                    Graduation Year
+                  </label>
+                  <select
+                    value={graduationYear}
+                    onChange={(e) => setGraduationYear(e.target.value)}
+                    className="w-full p-3 rounded-xl border border-[#E2DFD8] bg-[#FAF9F5] text-sm focus:outline-none focus:border-primary"
+                  >
+                    <option value="2025">2025</option>
+                    <option value="2026">2026</option>
+                    <option value="2027">2027</option>
+                    <option value="2028">2028</option>
+                  </select>
+                </div>
+              </div>
+
+              {interviewType === 'resume' && (
+                <div className="space-y-3 bg-[#FAF9F5] p-4 rounded-xl border border-[#E2DFD8]">
+                  <label className="text-xs font-bold text-[#161615] uppercase tracking-wider block">
+                    Upload Candidate Resume (PDF / DOCX / TXT)
+                  </label>
+                  <p className="text-xs text-[#6E6D68]">
+                    Questions will be synthesized specifically grounded in your resume projects, tools, and work experience.
+                  </p>
+                  <div className="border-2 border-dashed border-[#E2DFD8] bg-white rounded-xl p-4 text-center hover:border-primary transition-colors">
+                    <input
+                      type="file"
+                      accept=".pdf,.docx,.txt"
+                      onChange={handleResumeFileUpload}
+                      className="hidden"
+                      id="resume-file-input"
+                    />
+                    <label htmlFor="resume-file-input" className="cursor-pointer flex flex-col items-center">
+                      <span className="text-2xl mb-1">📄</span>
+                      <span className="text-xs font-semibold text-[#161615]">
+                        {resumeFile ? resumeFile.name : "Click to select resume file"}
+                      </span>
+                    </label>
+                  </div>
+
+                  {resumeStatus && (
+                    <div className="text-[11px] font-mono text-emerald-600">
+                      ✓ {resumeStatus}
+                    </div>
+                  )}
+
+                  {/* Extracted Resume Text Preview Box */}
+                  {resumeText && (
+                    <div className="mt-3 space-y-1">
+                      <span className="text-[11px] font-bold text-[#161615] block uppercase tracking-wider">
+                        📄 Extracted Resume Text Preview:
+                      </span>
+                      <textarea
+                        readOnly
+                        value={resumeText}
+                        className="w-full h-32 p-3 bg-white border border-[#E2DFD8] rounded-xl text-xs font-mono text-[#161615] leading-relaxed resize-none focus:outline-none"
+                      />
+                    </div>
+                  )}
+                </div>
+              )}
+
               {interviewType === 'company' && (
                 <Input
                   label="Target Company"
-                  placeholder="e.g. Google, Microsoft, Stripe"
+                  placeholder="e.g. Google, Microsoft, TCS"
                   value={company}
                   onChange={(e) => setCompany(e.target.value)}
-                  autoFocus
                 />
               )}
               
               <Input
-                label="Target Role"
-                placeholder="e.g. Senior Frontend Engineer, Product Manager"
+                label="Target Engineering Role *"
+                placeholder="e.g. Fullstack Engineer, Frontend Developer"
                 value={role}
                 onChange={(e) => setRole(e.target.value)}
-                autoFocus={interviewType !== 'company'}
+                required
               />
 
               <div>
                 <label className="text-sm font-medium text-brand-text block mb-3">
-                  Number of Questions
+                  Number of Practice Questions
                 </label>
                 <div className="flex flex-wrap gap-3">
                   {[3, 5, 8, 10].map(n => (
@@ -199,92 +333,64 @@ export default function InterviewSetupPage() {
                     </button>
                   ))}
                 </div>
-                <p className="text-xs text-brand-subtle mt-3">
-                  Estimated duration: ~{questionCount * 3} minutes
-                </p>
               </div>
             </Card>
             
             <div className="flex justify-end">
-              <Button size="lg" type="submit" disabled={!role.trim()}>
-                Continue →
+              <Button size="lg" type="submit" disabled={!role.trim() || !candidateName.trim()}>
+                Continue to Equipment Check →
               </Button>
             </div>
           </form>
         )}
 
-        {/* Step 3: Camera & Mic Check */}
+        {/* Step 3: Equipment Check */}
         {step === 3 && (
           <div className="animate-fade-in space-y-6">
             <h2 className="text-xl font-semibold text-brand-text">3. Equipment Check</h2>
             <p className="text-brand-muted text-sm">
-              We need access to your camera and microphone for AI face and voice analysis.
+              Verify your camera and microphone to enable real-time emotion recognition and speech transcript analysis.
             </p>
 
-            <Card className="overflow-hidden p-0 border-0 shadow-lg bg-black/5">
-              <div className="relative aspect-video bg-black flex items-center justify-center rounded-lg overflow-hidden border border-brand-border">
-                {/* Video Preview */}
-                <video 
-                  ref={videoRef} 
-                  autoPlay 
-                  playsInline 
-                  muted 
-                  className={`w-full h-full object-cover transform scale-x-[-1] transition-opacity duration-500 ${permissionGranted ? 'opacity-100' : 'opacity-0'}`}
+            <Card className="space-y-6">
+              <div className="aspect-video bg-black/40 rounded-xl overflow-hidden relative flex items-center justify-center border border-white/10">
+                <video
+                  ref={videoRef}
+                  autoPlay
+                  playsInline
+                  muted
+                  className={`w-full h-full object-cover transform scale-x-[-1] ${permissionGranted ? 'block' : 'hidden'}`}
                 />
                 
-                {/* Placeholder / Grant Button overlay */}
                 {!permissionGranted && (
-                  <div className="absolute inset-0 flex flex-col items-center justify-center p-6 text-center z-10 bg-black/40 backdrop-blur-sm">
-                    <div className="w-16 h-16 bg-white/10 rounded-full flex items-center justify-center mb-4 text-white">
-                      <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 10l4.553-2.069A1 1 0 0121 8.87v6.26a1 1 0 01-1.447.894L15 14M3 8a2 2 0 012-2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V8z" />
-                      </svg>
-                    </div>
-                    <Button onClick={requestPermissions} variant="primary" className="mb-2 shadow-lg hover:scale-105">
-                      Allow Camera & Microphone
+                  <div className="text-center p-6 space-y-3">
+                    <div className="text-4xl mb-2">📹</div>
+                    <p className="text-sm text-brand-muted">Camera preview will appear here once enabled.</p>
+                    <Button onClick={requestPermissions} type="button">
+                      Allow Camera & Microphone Access
                     </Button>
-                    {permissionError && (
-                      <p className="text-sm text-red-400 mt-2 max-w-sm">{permissionError}</p>
-                    )}
                   </div>
                 )}
-
-                {/* Success overlay elements */}
-                {permissionGranted && (
-                  <>
-                    <div className="absolute top-4 left-4 bg-black/60 backdrop-blur-md rounded-full px-3 py-1.5 flex items-center gap-2 border border-white/10">
-                      <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></div>
-                      <span className="text-xs text-white font-medium tracking-wide">CAMERA ACTIVE</span>
-                    </div>
-                    <div className="absolute top-4 right-4 bg-black/60 backdrop-blur-md rounded-full p-2 border border-white/10">
-                       <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 016 0v6a3 3 0 01-3 3z" />
-                      </svg>
-                    </div>
-                  </>
-                )}
               </div>
-              
-              {permissionGranted && (
-                 <div className="p-4 bg-white flex items-start gap-3 border-t border-brand-border">
-                   <span className="text-green-500 text-xl">✓</span>
-                   <div>
-                     <h4 className="font-semibold text-brand-text text-sm">Permissions granted</h4>
-                     <p className="text-xs text-brand-muted">Your audio and video are working perfectly. Make sure you are in a quiet, well-lit room.</p>
-                   </div>
-                 </div>
+
+              {permissionError && (
+                <div className="p-4 rounded-lg bg-red-500/10 border border-red-500/20 text-red-500 text-sm">
+                  {permissionError}
+                </div>
               )}
             </Card>
 
-            <div className="flex justify-end pt-4">
+            <div className="flex justify-between items-center">
+              <Button variant="ghost" onClick={() => setStep(2)}>
+                ← Back
+              </Button>
+              
               <Button 
                 size="lg" 
-                onClick={handleStart} 
+                onClick={handleStart}
                 disabled={!permissionGranted || creating}
-                loading={creating}
-                className={permissionGranted ? 'animate-pulse-ring' : ''}
               >
-                {creating ? 'Preparing Session...' : 'Start Interview'}
+                {creating ? 'Launching Room...' : 'Start Interview Session →'}
               </Button>
             </div>
           </div>

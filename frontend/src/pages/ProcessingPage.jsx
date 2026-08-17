@@ -1,111 +1,117 @@
-import { useEffect, useState, useRef } from 'react'
-import { useNavigate, useLocation } from 'react-router-dom'
-import api from '../utils/api.js'
-import { Card } from '../components/ui/index.js'
+import { useEffect, useState, useRef } from "react";
+import { useNavigate, useLocation } from "react-router-dom";
+import api from "../utils/api.js";
 
 export default function ProcessingPage() {
-  const navigate = useNavigate()
-  const { state } = useLocation()
-  const sessionId = state?.sessionId
-  const [error, setError] = useState(null)
-  const errorRef = useRef(null)
+  const navigate = useNavigate();
+  const { state } = useLocation();
+  const sessionId = state?.sessionId;
+  const [error, setError] = useState(null);
+  const errorRef = useRef(null);
 
   const setAndRefError = (errMsg) => {
-    errorRef.current = errMsg
-    setError(errMsg)
-  }
-  
+    errorRef.current = errMsg;
+    setError(errMsg);
+  };
+
   useEffect(() => {
     if (!sessionId) {
-      navigate('/dashboard')
-      return
+      navigate("/");
+      return;
     }
 
-    let intervalId
-    let isCancelled = false
+    let intervalId;
+    let isCancelled = false;
 
     const triggerAnalysis = async () => {
       try {
-        await api.post(`/analysis/${sessionId}/start`)
+        await api.post(`/api/analysis/${sessionId}/start`);
       } catch (err) {
         if (!isCancelled) {
-          setAndRefError(err.response?.data?.message || 'Failed to start analysis')
+          // If analysis is already processing or completed, don't show error
+          if (err.response?.status !== 400) {
+            setAndRefError(err.response?.data?.message || "Failed to start analysis");
+          }
         }
       }
-    }
+    };
 
     const checkStatus = async () => {
       try {
-        const { data } = await api.get(`/sessions/${sessionId}`)
-        if (data.data.session.status === 'completed') {
-          if (!isCancelled) navigate('/dashboard')
-        } else if (data.data.session.status === 'failed') {
-          if (!isCancelled) setAndRefError('Analysis failed. Please try again.')
+        const { data } = await api.get(`/api/sessions/${sessionId}`);
+        const currentSession = data.data?.session;
+
+        if (currentSession?.status === "completed") {
+          if (!isCancelled) navigate(`/report/${sessionId}`);
+        } else if (currentSession?.status === "failed") {
+          if (!isCancelled) setAndRefError("Analysis failed. Please try again.");
         }
       } catch (err) {
-        console.error('Status check error:', err)
+        console.error("Status check error:", err);
       }
-    }
+    };
 
     triggerAnalysis().then(() => {
       if (!isCancelled) {
+        // Poll status every 2 seconds
         intervalId = setInterval(() => {
-          if (!errorRef.current) checkStatus()
-        }, 3000)
+          if (!errorRef.current) checkStatus();
+        }, 2000);
       }
-    })
-    
+    });
+
     return () => {
-      isCancelled = true
-      if (intervalId) clearInterval(intervalId)
-    }
-  }, [navigate, sessionId])
-  
+      isCancelled = true;
+      if (intervalId) clearInterval(intervalId);
+    };
+  }, [navigate, sessionId]);
+
   if (error) {
     return (
-      <div className="min-h-[calc(100vh-4rem)] flex flex-col items-center justify-center bg-brand-bg p-4">
-        <Card className="max-w-md w-full text-center p-12 space-y-6 shadow-xl border-danger/20">
-          <div className="text-6xl mb-4">⚠️</div>
-          <h1 className="text-2xl font-bold text-danger mb-2">Analysis Failed</h1>
-          <p className="text-brand-muted text-sm">{error}</p>
-          <button 
-            onClick={() => { setError(null); navigate('/dashboard') }}
-            className="mt-4 px-6 py-2 bg-primary text-white rounded-md font-medium"
+      <div className="min-h-[calc(100vh-4rem)] flex flex-col items-center justify-center bg-[#F6F5F0] p-4 font-sans">
+        <div className="bg-white border border-[#E0DFD9] rounded-2xl max-w-md w-full text-center p-8 space-y-6 shadow-sm">
+          <div className="text-5xl mb-2">⚠️</div>
+          <h1 className="text-xl font-bold text-[#111110]">Analysis Alert</h1>
+          <p className="text-xs text-[#111110]/60">{error}</p>
+          <button
+            onClick={() => {
+              setError(null);
+              navigate("/");
+            }}
+            className="px-6 py-2.5 bg-[#111110] hover:bg-[#1D5DFF] text-white rounded-xl font-semibold text-xs transition-colors"
           >
-            Back to Dashboard
+            Return to Home
           </button>
-        </Card>
+        </div>
       </div>
-    )
+    );
   }
-  
+
   return (
-    <div className="min-h-[calc(100vh-4rem)] flex flex-col items-center justify-center bg-brand-bg p-4">
-      <Card className="max-w-md w-full text-center p-12 space-y-6 shadow-xl border-primary/20">
-        <div className="relative w-24 h-24 mx-auto">
-          {/* Outer rotating ring */}
-          <div className="absolute inset-0 rounded-full border-4 border-transparent border-t-primary border-r-primary animate-[spin_2s_linear_infinite]"></div>
-          {/* Inner rotating ring */}
-          <div className="absolute inset-2 rounded-full border-4 border-transparent border-b-primary-dark border-l-primary-dark animate-[spin_1.5s_linear_infinite_reverse]"></div>
-          {/* Center icon */}
-          <div className="absolute inset-0 flex items-center justify-center text-3xl">
+    <div className="min-h-[calc(100vh-4rem)] flex flex-col items-center justify-center bg-[#F6F5F0] p-4 font-sans">
+      <div className="bg-white border border-[#E0DFD9] rounded-2xl max-w-md w-full text-center p-8 space-y-6 shadow-sm">
+        <div className="relative w-20 h-20 mx-auto">
+          <div className="absolute inset-0 rounded-full border-4 border-transparent border-t-[#1D5DFF] border-r-[#1D5DFF] animate-spin" />
+          <div className="absolute inset-0 flex items-center justify-center text-2xl">
             🤖
           </div>
         </div>
-        
+
         <div>
-          <h1 className="text-2xl font-bold text-brand-text mb-2">Analyzing Performance</h1>
-          <p className="text-brand-muted text-sm">
-            AI is evaluating your video, voice confidence, and answers...
+          <h1 className="text-xl font-bold text-[#111110] mb-1">
+            Analyzing Candidate Telemetry
+          </h1>
+          <p className="text-xs text-[#111110]/60">
+            Multimodal AI engines are evaluating video posture, Speech Emotion model probabilities, and answer quality...
           </p>
         </div>
-        
-        <div className="pt-6">
-          <div className="progress-bar w-full">
-            <div className="progress-bar-fill animate-[shimmer_2s_infinite]" style={{ width: '100%', backgroundImage: 'linear-gradient(90deg, var(--color-primary) 0%, var(--color-primary-dark) 50%, var(--color-primary) 100%)', backgroundSize: '200% 100%' }}></div>
+
+        <div className="pt-2">
+          <div className="w-full bg-[#F6F5F0] h-2 rounded-full overflow-hidden border border-[#E0DFD9]">
+            <div className="bg-[#1D5DFF] h-full rounded-full animate-pulse w-full" />
           </div>
         </div>
-      </Card>
+      </div>
     </div>
-  )
+  );
 }

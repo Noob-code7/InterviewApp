@@ -33,3 +33,7 @@ redis-data/
 
 # Local uploads (do not commit user media files)
 backend/uploads/
+
+# Large model weights (download or generate locally, do not commit)
+SER_model/*.pth
+SER_model/*.zip

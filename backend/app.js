@@ -13,6 +13,8 @@ import answerRoutes from "./routes/answers.js";
 import analysisRoutes from "./routes/analysis.js";
 import adminRoutes from "./routes/admin.js";
 import writingRoutes from "./routes/writing.js";
+import reportRoutes from "./routes/reports.js";
+import storageRoutes from "./routes/storage.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -33,10 +35,10 @@ app.use(
   }),
 );
 
-// Global rate limiter — tighter limits on auth routes added in Phase 2
+// Global rate limiter — generous limits in development mode
 const globalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 min
-  max: 200,
+  max: isDev ? 2000 : 300,
   standardHeaders: true,
   legacyHeaders: false,
   message: {
@@ -83,6 +85,8 @@ app.use("/api/sessions", questionRoutes);
 app.use("/api/sessions", answerRoutes);
 app.use("/api/analysis", analysisRoutes);
 app.use("/api/sessions", writingRoutes);
+app.use("/api/reports", reportRoutes);
+app.use("/api/storage", storageRoutes);
 // Admin routes (faculty can manage question banks)
 app.use("/api/admin", adminRoutes);
 

@@ -184,3 +184,24 @@ export const me = async (req, res) => {
     return sendError(res, err.message, 500);
   }
 };
+
+// ── PUT /api/auth/profile ────────────────────────────────────────────────────
+export const updateProfile = async (req, res) => {
+  try {
+    const { name, college, targetRole, password } = req.body;
+    const user = await User.findById(req.user._id);
+    if (!user) return sendError(res, "User not found", 404);
+
+    if (name) user.name = name;
+    if (college !== undefined) user.college = college;
+    if (targetRole !== undefined) user.targetRole = targetRole;
+    if (password && password.length >= 6) {
+      user.passwordHash = password;
+    }
+
+    await user.save();
+    return sendSuccess(res, { user: user.toSafeObject() });
+  } catch (err) {
+    return sendError(res, err.message, 500);
+  }
+};

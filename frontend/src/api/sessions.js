@@ -5,5 +5,6 @@ export const sessionsApi = {
   list:         (params) => api.get('/api/sessions', { params }),
   get:          (id)  => api.get(`/api/sessions/${id}`),
   getStats:     ()    => api.get('/api/sessions/stats'),
+  getHistory:   ()    => api.get('/api/sessions/history'),
   updateStatus: (id, status) => api.patch(`/api/sessions/${id}/status`, { status }),
 }

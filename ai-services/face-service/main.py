@@ -2,6 +2,7 @@ import os
 import cv2
 import tempfile
 import numpy as np
+from typing import Optional
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
@@ -30,14 +31,20 @@ class FaceAnalysisResult(BaseModel):
 
 
 def compute_confidence(emotion_dict):
-    high = (emotion_dict.get("neutral",  0)
-          + emotion_dict.get("happy",    0)
-          + emotion_dict.get("surprise", 0) * 0.5)
-    low  = (emotion_dict.get("fear",    0)
-          + emotion_dict.get("sad",     0)
-          + emotion_dict.get("angry",   0)
-          + emotion_dict.get("disgust", 0))
-    return max(0, min(100, int(high - low)))
+    neutral = emotion_dict.get("neutral", 0)
+    happy = emotion_dict.get("happy", 0)
+    surprise = emotion_dict.get("surprise", 0)
+
+    # Heavily penalize negative, distorted, or distressed facial expressions
+    negative = (
+        emotion_dict.get("fear", 0) * 1.2 +
+        emotion_dict.get("sad", 0) * 1.2 +
+        emotion_dict.get("angry", 0) * 1.5 +
+        emotion_dict.get("disgust", 0) * 1.5
+    )
+
+    score = (neutral * 0.7 + happy * 0.9 + surprise * 0.3) - negative
+    return max(0.0, min(100.0, float(score)))
 
 
 @app.get("/health")
@@ -46,10 +53,14 @@ async def health():
 
 
 @app.post("/analyze")
-async def analyze_face(video: UploadFile = File(...), reference_image: UploadFile = File(None)):
+async def analyze_face(
+    video: UploadFile = File(...),
+    reference_image: Optional[UploadFile] = File(None)
+):
     """
     Accept a video file and an optional reference image.
     Extract frames, run DeepFace analysis for emotions and identity verification.
+    Rigorous detection checking: penalizes missing face or distorted expressions.
     """
     if not video.content_type or not video.content_type.startswith("video/"):
         raise HTTPException(status_code=400, detail="File must be a video")
@@ -61,134 +72,146 @@ async def analyze_face(video: UploadFile = File(...), reference_image: UploadFil
         temp_video_path = temp_video.name
 
     ref_img_path = None
-    if reference_image:
+    ref_img_rgb = None
+    if reference_image and hasattr(reference_image, "filename") and reference_image.filename:
         with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as temp_ref:
             ref_content = await reference_image.read()
             temp_ref.write(ref_content)
             ref_img_path = temp_ref.name
-
-    cap = cv2.VideoCapture(temp_video_path)
-    if not cap.isOpened():
-        os.remove(temp_video_path)
-        if ref_img_path: os.remove(ref_img_path)
-        raise HTTPException(status_code=400, detail="Could not open video file")
-
-    fps = cap.get(cv2.CAP_PROP_FPS)
-    if fps <= 0:
-        fps = 30  # Default fallback
         
-    frame_interval = int(fps) # Sample 1 frame per second
-    
-    total_frames_analyzed = 0
-    faces_detected_count = 0
-    
-    confidence_scores = []
-    nervousness_scores = []
-    
-    substitution_flags = 0
-    
-    frame_idx = 0
-    while True:
-        ret, frame = cap.read()
-        if not ret:
-            break
+        ref_bgr = cv2.imread(ref_img_path)
+        if ref_bgr is not None:
+            ref_img_rgb = cv2.cvtColor(ref_bgr, cv2.COLOR_BGR2RGB)
+
+    try:
+        cap = cv2.VideoCapture(temp_video_path)
+        if not cap.isOpened():
+            raise HTTPException(status_code=400, detail="Could not open video file")
+
+        fps = cap.get(cv2.CAP_PROP_FPS)
+        if fps <= 0:
+            fps = 30
             
-        if frame_idx % frame_interval == 0:
-            total_frames_analyzed += 1
-            print(f"Analyzing frame {frame_idx}")
-            try:
-                # Emotion Analysis
-                res = DeepFace.analyze(frame, actions=["emotion"], enforce_detection=True, silent=True)
-                if isinstance(res, list):
-                    face_info = res[0]
-                else:
-                    face_info = res
-                    
-                faces_detected_count += 1
-                raw_emotions = face_info.get("emotion", {})
+        frame_interval = max(1, int(fps)) # Sample 1 frame per second
+        
+        total_frames_analyzed = 0
+        faces_detected_count = 0
+        
+        confidence_scores = []
+        nervousness_scores = []
+        substitution_flags = 0
+        notes = []
+        
+        frame_idx = 0
+        while True:
+            ret, frame_bgr = cap.read()
+            if not ret:
+                break
                 
-                # Calculate metrics for this frame
-                score = compute_confidence(raw_emotions)
-                confidence_scores.append(score)
+            if frame_idx % frame_interval == 0:
+                total_frames_analyzed += 1
+                frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
                 
-                # Nervousness is roughly the inverse/negative emotions
-                nervousness = raw_emotions.get("fear", 0) + raw_emotions.get("sad", 0) + raw_emotions.get("angry", 0)
-                nervousness_scores.append(nervousness)
-                
-                # Identity Verification (if reference provided)
-                if ref_img_path:
-                    try:
-                        verify_res = DeepFace.verify(
-                            frame,
-                            ref_img_path,
-                            enforce_detection=False,
-                            silent=True
+                try:
+                    res = DeepFace.analyze(frame_rgb, actions=["emotion"], enforce_detection=False, silent=True)
+                    if isinstance(res, list):
+                        face_info = res[0]
+                    else:
+                        face_info = res
+
+                    region = face_info.get("region", {})
+                    w = region.get("w", 0)
+                    h = region.get("h", 0)
+
+                    # Verify a real face was located in the frame
+                    if w > 10 and h > 10:
+                        faces_detected_count += 1
+                        raw_emotions = face_info.get("emotion", {})
+                        
+                        score = compute_confidence(raw_emotions)
+                        confidence_scores.append(score)
+                        
+                        nervousness = (
+                            raw_emotions.get("fear", 0) +
+                            raw_emotions.get("sad", 0) +
+                            raw_emotions.get("angry", 0) +
+                            raw_emotions.get("disgust", 0)
                         )
-                        if not verify_res.get("verified", False):
-                            substitution_flags += 1
-                    except Exception as e:
-                        # If verification completely fails (e.g., face not found by verify model), flag it
-                        substitution_flags += 1
+                        nervousness_scores.append(nervousness)
 
-            except ValueError as e:
-                # No face detected in this frame
-                print("Face Error:", e)
-                pass
-            except Exception as e:
-                print("Other Error:", e)
-                pass
-                
-        frame_idx += 1
+                        if raw_emotions.get("angry", 0) > 25 or raw_emotions.get("disgust", 0) > 25:
+                            notes.append("Distorted or tense facial expression detected during response.")
+                        if raw_emotions.get("fear", 0) > 30:
+                            notes.append("Elevated candidate facial anxiety detected.")
+                        
+                        # Identity Verification against reference image
+                        if ref_img_rgb is not None:
+                            try:
+                                verify_res = DeepFace.verify(
+                                    frame_rgb,
+                                    ref_img_rgb,
+                                    enforce_detection=False,
+                                    silent=True
+                                )
+                                if not verify_res.get("verified", False):
+                                    substitution_flags += 1
+                            except Exception:
+                                substitution_flags += 1
+                    else:
+                        notes.append("Face not clearly centered in camera frame.")
 
-    cap.release()
-    if os.path.exists(temp_video_path):
-        os.remove(temp_video_path)
-    if ref_img_path and os.path.exists(ref_img_path):
-        os.remove(ref_img_path)
+                except Exception as e:
+                    print("Face processing error on frame:", e)
+                    
+            frame_idx += 1
+
+        cap.release()
+
+    finally:
+        if os.path.exists(temp_video_path):
+            os.remove(temp_video_path)
+        if ref_img_path and os.path.exists(ref_img_path):
+            os.remove(ref_img_path)
 
     # Calculate final metrics
     if total_frames_analyzed == 0:
-        total_frames_analyzed = 1 # avoid div zero
+        total_frames_analyzed = 1
         
     attentionScore = (faces_detected_count / total_frames_analyzed) * 100.0
-    eyeContactScore = attentionScore * 0.95 # Proxy correlation for now
+    eyeContactScore = attentionScore * 0.90
     
-    if len(confidence_scores) > 0:
+    if faces_detected_count > 0 and len(confidence_scores) > 0:
         confidenceScore = sum(confidence_scores) / len(confidence_scores)
         nervousnessScore = sum(nervousness_scores) / len(nervousness_scores)
     else:
         confidenceScore = 0.0
-        nervousnessScore = 0.0
+        nervousnessScore = 50.0
+        notes.append("No face detected in video telemetry stream.")
 
-    # Ensure bounds
     confidenceScore = max(0.0, min(100.0, confidenceScore))
     nervousnessScore = max(0.0, min(100.0, nervousnessScore))
 
-    # Alert if substitution detected in more than 20% of the detected frames
-    faceSubstitutionAlert = False
-    if faces_detected_count > 0 and (substitution_flags / faces_detected_count) > 0.20:
-        faceSubstitutionAlert = True
+    face_substitution_alert = False
+    if faces_detected_count > 0 and substitution_flags / faces_detected_count > 0.3:
+        face_substitution_alert = True
+        notes.append("🚨 Face substitution alert: Identity mismatch detected across frames.")
 
-    notes = []
-    if faceSubstitutionAlert:
-        notes.append("CRITICAL: Face substitution or multiple different faces detected during the answer.")
-    if attentionScore < 50:
-        notes.append("Candidate was frequently away from the camera or not looking forward.")
-    if nervousnessScore > 50:
-        notes.append("Candidate displayed signs of stress or negative emotions.")
-    if confidenceScore > 75:
-        notes.append("Candidate appeared very confident and calm.")
-    if not notes and faces_detected_count > 0:
-        notes.append("Good eye contact and maintained attention throughout.")
+    unique_notes = list(dict.fromkeys(notes))
+    if not unique_notes:
+        if confidenceScore >= 70:
+            unique_notes.append("Candidate maintained stable eye posture and calm posture.")
+        else:
+            unique_notes.append("Candidate showed posture fluctuations during recording.")
 
     result = FaceAnalysisResult(
         confidenceScore=round(confidenceScore, 1),
         nervousnessScore=round(nervousnessScore, 1),
         attentionScore=round(attentionScore, 1),
         eyeContactScore=round(eyeContactScore, 1),
-        notes=notes,
-        faceSubstitutionAlert=faceSubstitutionAlert
+        notes=unique_notes,
+        faceSubstitutionAlert=face_substitution_alert
     )
+
     return {"success": True, "data": result.model_dump()}
 
 

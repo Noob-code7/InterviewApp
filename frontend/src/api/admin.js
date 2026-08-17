@@ -2,6 +2,7 @@ import api from "./axios.js";
 
 export const adminApi = {
   createQuestion: (payload) => api.post("/api/admin/questions", payload),
+  bulkCreateQuestions: (payload) => api.post("/api/admin/questions/bulk", payload),
   listQuestions: (params) => api.get("/api/admin/questions", { params }),
   getQuestion: (id) => api.get(`/api/admin/questions/${id}`),
   updateQuestion: (id, payload) =>

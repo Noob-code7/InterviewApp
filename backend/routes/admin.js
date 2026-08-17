@@ -2,6 +2,7 @@ import { Router } from "express";
 import { protect, restrict } from "../middleware/auth.js";
 import {
   createQuestion,
+  bulkCreateQuestions,
   listQuestions,
   getQuestion,
   updateQuestion,
@@ -15,6 +16,7 @@ router.use(protect);
 router.use(restrict("faculty", "admin"));
 
 router.post("/questions", createQuestion);
+router.post("/questions/bulk", bulkCreateQuestions);
 router.get("/questions", listQuestions);
 router.get("/questions/:id", getQuestion);
 router.put("/questions/:id", updateQuestion);

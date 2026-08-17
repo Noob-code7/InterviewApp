@@ -16,7 +16,7 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false)
   const [showPassword, setShowPassword] = useState(false)
 
-  const from = location.state?.from?.pathname || '/dashboard'
+  const from = location.state?.from?.pathname || '/'
 
   // Redirect if already authenticated
   useEffect(() => {
