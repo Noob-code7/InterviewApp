@@ -4,6 +4,8 @@ import { storageApi } from './storage.js'
 export const interviewApi = {
   generateQuestions: (sessionId) => api.post(`/api/sessions/${sessionId}/questions`),
 
+  getWritingSession: (sessionId) => api.get(`/api/sessions/${sessionId}`),
+
   uploadAnswer: async (sessionId, questionId, videoBlob, options = {}) => {
     try {
       // 1. Upload media directly via storageApi (Cloudflare R2 or local fallback)
