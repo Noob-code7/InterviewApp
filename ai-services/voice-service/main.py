@@ -320,4 +320,5 @@ if __name__ == "__main__":
     import uvicorn
 
     port = int(os.getenv("PORT", 8002))
-    uvicorn.run("main:app", host="0.0.0.0", port=port, reload=True)
+    reload = os.getenv("UVICORN_RELOAD", "false").lower() == "true"
+    uvicorn.run("main:app", host="0.0.0.0", port=port, reload=reload)
