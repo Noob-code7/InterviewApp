@@ -1,24 +1,37 @@
-﻿import axios from "axios";
+import axios from "axios";
 
 const NLP_SERVICE_URL = process.env.NLP_SERVICE_URL || "http://127.0.0.1:8003";
 
 /**
  * Generate deep technical questions strictly grounded in candidate projects.
  */
-export const generateProjectQuestions = async (projects, role = "Software Engineer", count = 2) => {
+export const generateProjectQuestions = async (
+  projects,
+  role = "Software Engineer",
+  count = 2,
+  options = {}
+) => {
   try {
     const response = await axios.post(
       `${NLP_SERVICE_URL}/generate-project-questions`,
-      { projects, role, count },
+      {
+        projects,
+        role,
+        count,
+        sessionId: options.sessionId || null,
+        sessionIndex: options.sessionIndex || 0,
+        previousQuestions: options.previousQuestions || [],
+      },
       { timeout: 30000 }
     );
     return response.data?.data?.questions || [];
   } catch (err) {
     console.warn("[LLMService] Error generating project questions, using fallback:", err.message);
     return projects.slice(0, count).map((p) => ({
-      questionText: `In your project '${p.title}' using ${p.techStack?.join(", ") || "your tech stack"}, how did you design the system architecture and handle performance bottlenecks?`,
+      questionText: `In your project '${p.title}', walk me through the end-to-end architecture, data flow, and how you engineered the core features.`,
       track: "project",
-      expectedConcepts: ["System architecture", "Component interaction", "Optimization"],
+      dimension: "architecture",
+      expectedConcepts: [`Architecture of ${p.title}`, "Data flow", "Component interactions"],
       keywords: (p.techStack || []).map((s) => s.toLowerCase()),
       projectContext: p,
     }));
@@ -89,4 +102,4 @@ export default {
   generateProjectQuestions,
   generateProjectFollowUp,
   evaluateProjectAnswer,
-};
+};

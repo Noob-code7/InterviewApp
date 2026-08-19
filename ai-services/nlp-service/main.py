@@ -443,23 +443,33 @@ class ProjectQuestionsRequest(BaseModel):
     projects: List[Dict[str, Any]]
     role: Optional[str] = "Software Engineer"
     count: Optional[int] = 2
+    sessionId: Optional[str] = None
+    sessionIndex: Optional[int] = 0
+    previousQuestions: Optional[List[str]] = None
 
 class ProjectFollowUpRequest(BaseModel):
-    projectContext: Dict[str, Any]
+    projectContext: Optional[Dict[str, Any]] = None
     question: str
     answer: str
     previousFollowUps: Optional[List[Dict[str, str]]] = None
     turnCount: Optional[int] = 1
 
 class ProjectEvaluateRequest(BaseModel):
-    projectContext: Dict[str, Any]
+    projectContext: Optional[Dict[str, Any]] = None
     question: str
     answer: str
     isFollowUp: Optional[bool] = False
 
 @app.post("/generate-project-questions")
 async def generate_project_questions_endpoint(body: ProjectQuestionsRequest):
-    questions = await generate_project_questions_llm(body.projects, body.role or "Software Engineer", body.count or 2)
+    questions = await generate_project_questions_llm(
+        projects=body.projects,
+        role=body.role or "Software Engineer",
+        count=body.count or 2,
+        session_id=body.sessionId,
+        session_index=body.sessionIndex or 0,
+        previous_questions=body.previousQuestions or []
+    )
     return {"success": True, "data": {"questions": questions}}
 
 @app.post("/generate-project-followup")

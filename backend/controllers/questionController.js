@@ -35,7 +35,7 @@ export const generateQuestions = async (req, res) => {
     const userCollege = req.user.college || session.college || null;
     const count = session.questionCount || 5;
 
-    // ── Multi-Track Resume Interview Assembly ──────────────────────────────
+    // ── Multi-Track Resume Interview Assembly ────────────────────────────────
     if (type === "resume") {
       try {
         const axios = (await import("axios")).default;
@@ -48,7 +48,7 @@ export const generateQuestions = async (req, res) => {
             role,
             count,
           },
-          { timeout: 15000 }
+          { timeout: 35000 }
         );
 
         const nlpData = nlpRes.data?.data || {};
@@ -57,13 +57,21 @@ export const generateQuestions = async (req, res) => {
         let projectQuestions = (nlpData.questions || []).filter((q) => q.track === "project");
         const fallbackResumeQuestions = nlpData.questions || [];
 
+        // Determine dynamic project question allocation (e.g., 2-3 project questions)
+        const targetProjectCount = Math.max(2, Math.min(resumeProjects.length > 1 ? 3 : 2, count - 2));
+
         // Track 3: Prefer LLM-generated project questions grounded in the resume projects
         if (resumeProjects.length > 0) {
           try {
             const llmProjectQuestions = await generateProjectQuestions(
               resumeProjects,
               role,
-              Math.min(2, count),
+              targetProjectCount,
+              {
+                sessionId: session._id.toString(),
+                sessionIndex: 0,
+                previousQuestions: [],
+              }
             );
             if (Array.isArray(llmProjectQuestions) && llmProjectQuestions.length > 0) {
               projectQuestions = llmProjectQuestions;
@@ -91,7 +99,7 @@ export const generateQuestions = async (req, res) => {
           });
         }
 
-        // Track 2: Core Subject Questions matching Resume Skills (2 questions from DB)
+        // Track 2: Core Subject Questions matching Resume Skills (from DB)
         let subjectQuery = {
           $or: [{ college: null }, { college: { $exists: false } }],
         };
@@ -102,8 +110,10 @@ export const generateQuestions = async (req, res) => {
         }
 
         const subjectDbQuestions = await Question.find(subjectQuery).lean();
+        const targetSubjectCount = Math.max(1, count - 1 - Math.min(projectQuestions.length || 2, targetProjectCount));
+
         if (subjectDbQuestions.length > 0) {
-          const selectedSubjects = getRandomQuestions(subjectDbQuestions, Math.min(2, count - 1));
+          const selectedSubjects = getRandomQuestions(subjectDbQuestions, targetSubjectCount);
           for (const s of selectedSubjects) {
             assembledQuestions.push({
               questionText: s.questionText,
@@ -115,24 +125,26 @@ export const generateQuestions = async (req, res) => {
           }
         }
 
-        // Track 3: Project-Specific Questions from Resume Projects (1-2 questions)
+        // Track 3: Project-Specific Questions from Resume Projects
         if (projectQuestions.length > 0) {
-          for (const p of projectQuestions.slice(0, 2)) {
+          for (const p of projectQuestions.slice(0, targetProjectCount)) {
             assembledQuestions.push({
               questionText: p.questionText,
               track: "project",
-              expectedKeywords: p.keywords || [],
+              dimension: p.dimension || "architecture",
+              expectedKeywords: p.keywords || p.expectedKeywords || [],
               expectedConcepts: p.expectedConcepts || [],
               referenceAnswer: p.referenceAnswer || "",
               projectContext: p.projectContext || null,
             });
           }
         } else if (fallbackResumeQuestions.length > 0) {
-          for (const f of fallbackResumeQuestions.slice(0, 2)) {
+          for (const f of fallbackResumeQuestions.slice(0, targetProjectCount)) {
             assembledQuestions.push({
               questionText: f.questionText,
               track: f.track || "project",
-              expectedKeywords: f.keywords || [],
+              dimension: f.dimension || "architecture",
+              expectedKeywords: f.keywords || f.expectedKeywords || [],
               expectedConcepts: f.expectedConcepts || [],
               referenceAnswer: f.referenceAnswer || "",
               projectContext: f.projectContext || null,
@@ -175,6 +187,7 @@ export const generateQuestions = async (req, res) => {
           questionId: `resume-q-${session._id}-${idx}`,
           questionText: q.questionText,
           track: q.track || "subject",
+          dimension: q.dimension || null,
           expectedKeywords: q.expectedKeywords || [],
           expectedConcepts: q.expectedConcepts || [],
           referenceAnswer: q.referenceAnswer || "",
@@ -200,7 +213,7 @@ export const generateQuestions = async (req, res) => {
       }
     }
 
-    // ── Standard Technical & HR Interview Modes ─────────────────────────────
+    // ── Standard Technical & HR Interview Modes ──────────────────────────────
     let adminCustomQuestions = [];
     let defaultDbQuestions = [];
 
