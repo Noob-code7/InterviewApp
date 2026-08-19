@@ -1,7 +1,6 @@
 import { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
 import { adminApi } from "../api/admin.js";
-import { Card, Button } from "../components/ui/index.js";
 
 export default function FacultyDashboardPage() {
   const [activeTab, setActiveTab] = useState("drives"); // 'drives' | 'single' | 'bulk'
@@ -61,7 +60,7 @@ export default function FacultyDashboardPage() {
     e.preventDefault();
     const code = driveForm.driveCode.toUpperCase().trim() || `DRIVE-${Math.floor(1000 + Math.random() * 9000)}`;
     setCreatedCode(code);
-    alert(`🎉 Placement Drive "${driveForm.driveName || code}" created! Share code: ${code} with students.`);
+    alert(`Placement Drive "${driveForm.driveName || code}" created! Share code: ${code} with students.`);
   };
 
   const handleCreateSingleQuestion = async (e) => {
@@ -101,11 +100,11 @@ export default function FacultyDashboardPage() {
       const items = Array.isArray(parsed) ? parsed : [parsed];
 
       const res = await adminApi.bulkCreateQuestions({ questions: items });
-      setBulkStatus(`✅ Successfully imported ${res.data?.data?.count || items.length} questions into database!`);
+      setBulkStatus(`Successfully imported ${res.data?.data?.count || items.length} questions into database!`);
       setJsonInput("");
       fetchQuestions();
     } catch (err) {
-      setBulkStatus(`❌ Error: ${err.response?.data?.error || err.message}`);
+      setBulkStatus(`Error: ${err.response?.data?.error || err.message}`);
     }
   };
 
@@ -157,134 +156,111 @@ export default function FacultyDashboardPage() {
     }
   };
 
+  const inputCls = "w-full bg-[#FAF9F5] border border-[#E0DFD9] px-4 py-3 text-sm text-[#111110] font-semibold placeholder:text-[#9CA3AF] rounded-lg focus:outline-none focus:bg-white focus:border-[#1D5DFF] focus:ring-2 focus:ring-[#1D5DFF]/15 transition-all";
+  const labelCls = "block font-mono text-xs font-bold uppercase text-[#111110] tracking-wide mb-1.5";
+  const selectCls = "w-full bg-[#FAF9F5] border border-[#E0DFD9] px-4 py-3 text-sm text-[#111110] font-semibold rounded-lg focus:outline-none focus:bg-white focus:border-[#1D5DFF] focus:ring-2 focus:ring-[#1D5DFF]/15 transition-all";
+
   return (
-    <div className="min-h-screen bg-[#F6F5F0] text-[#161615] p-6 lg:p-10 font-sans">
-      <div className="max-w-7xl mx-auto space-y-8">
-        
-        {/* Header Bar */}
-        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 border-b border-[#E2DFD8] pb-6">
+    <div className="min-h-screen bg-[#F6F5F0] text-[#111110] font-sans pt-10 pb-20 px-6">
+      <div className="max-w-5xl mx-auto space-y-8 animate-fade-in">
+
+        {/* Top Header */}
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 border-b border-[#E0DFD9] pb-6">
           <div>
-            <span className="px-3 py-1 rounded-full text-xs font-semibold uppercase tracking-wider bg-blue-50 text-[#1D5DFF] border border-blue-100">
-              Faculty & Admin Workspace
+            <span className="font-mono text-xs font-bold uppercase text-[#1D5DFF] tracking-wider block mb-1">
+              FACULTY COMMAND DESK
             </span>
-            <h1 className="text-3xl font-extrabold text-[#161615] tracking-tight mt-2">
-              Placement Drive Rules & Question Bank Manager
+            <h1 className="text-3xl font-extrabold text-[#111110] tracking-tight">
+              Placement Drives & Question Bank
             </h1>
-            <p className="text-xs text-[#6E6D68] mt-1">
-              Configure custom interview rules, manage college question banks, toggle default fallbacks, and upload CSV/JSON question files.
+            <p className="text-xs text-[#4B5563] font-medium mt-1">
+              Configure placement drive rules, manage departmental question banks, and upload bulk question sets.
             </p>
           </div>
 
           <div className="flex items-center gap-3">
             <Link
               to="/faculty/reports"
-              className="px-5 py-2.5 bg-[#1D5DFF] hover:bg-blue-600 text-white rounded-xl text-xs font-semibold transition-colors flex items-center gap-2 shadow-md"
+              className="px-5 py-2.5 bg-[#111110] hover:bg-[#1D5DFF] text-white rounded-lg text-xs font-bold transition-all duration-200 shadow-sm active:scale-98"
             >
-              <span>📊</span> View Student Reports & Roster →
+              View Student Roster →
             </Link>
           </div>
         </div>
 
-        {/* Workspace Navigation Tabs */}
-        <div className="flex items-center gap-2 border-b border-[#E2DFD8] pb-1">
-          <button
-            onClick={() => setActiveTab("drives")}
-            className={`px-5 py-2.5 rounded-xl font-bold text-xs transition-colors flex items-center gap-2 ${
-              activeTab === "drives"
-                ? "bg-[#1D5DFF] text-white shadow-md"
-                : "bg-white text-[#6E6D68] border border-[#E2DFD8] hover:bg-[#FAF9F5]"
-            }`}
-          >
-            <span>⚡</span> Placement Drive Settings
-          </button>
-
-          <button
-            onClick={() => setActiveTab("single")}
-            className={`px-5 py-2.5 rounded-xl font-bold text-xs transition-colors flex items-center gap-2 ${
-              activeTab === "single"
-                ? "bg-[#1D5DFF] text-white shadow-md"
-                : "bg-white text-[#6E6D68] border border-[#E2DFD8] hover:bg-[#FAF9F5]"
-            }`}
-          >
-            <span>📝</span> Add Single Question
-          </button>
-
-          <button
-            onClick={() => setActiveTab("bulk")}
-            className={`px-5 py-2.5 rounded-xl font-bold text-xs transition-colors flex items-center gap-2 ${
-              activeTab === "bulk"
-                ? "bg-[#1D5DFF] text-white shadow-md"
-                : "bg-white text-[#6E6D68] border border-[#E2DFD8] hover:bg-[#FAF9F5]"
-            }`}
-          >
-            <span>📁</span> Bulk CSV / JSON Upload
-          </button>
+        {/* Navigation Tabs */}
+        <div className="flex items-center gap-2 border-b border-[#E0DFD9] pb-2">
+          {[
+            { id: "drives", label: "PLACEMENT DRIVES" },
+            { id: "single", label: "ADD SINGLE QUESTION" },
+            { id: "bulk",   label: "BULK CSV / JSON UPLOAD" },
+          ].map((tab) => (
+            <button
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id)}
+              className={`px-4 py-2 text-xs font-mono font-bold rounded-lg transition-all ${
+                activeTab === tab.id
+                  ? "bg-[#111110] text-white"
+                  : "bg-white text-[#4B5563] border border-[#E0DFD9] hover:border-[#111110] hover:text-[#111110]"
+              }`}
+            >
+              {tab.label}
+            </button>
+          ))}
         </div>
 
-        {/* Tab 1: Drive Creation & Custom Rules Workspace */}
+        {/* TAB 1: PLACEMENT DRIVES */}
         {activeTab === "drives" && (
-          <Card className="bg-white border border-[#E2DFD8] rounded-2xl p-6 shadow-sm space-y-5">
-            <div className="flex items-center justify-between border-b border-[#E2DFD8] pb-3">
-              <h2 className="text-base font-bold text-[#161615]">
-                Configure Placement Drive & Interview Settings
-              </h2>
-              <span className="text-xs text-[#6E6D68]">Faculty Authority Settings</span>
+          <div className="bg-white border border-[#E0DFD9] rounded-2xl p-6 sm:p-8 space-y-6 shadow-sm">
+            <div className="border-b border-[#E0DFD9] pb-4">
+              <h2 className="text-xl font-extrabold text-[#111110]">Configure Placement Drive</h2>
+              <p className="text-xs text-[#4B5563] font-medium mt-0.5">Students enter the drive code to take this customized interview format.</p>
             </div>
 
-            <form onSubmit={handleCreateDrive} className="space-y-5">
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <form onSubmit={handleCreateDrive} className="space-y-6">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-5">
                 <div>
-                  <label className="block text-xs font-semibold text-[#6E6D68] uppercase tracking-wider mb-1">
-                    Drive / Company Name *
-                  </label>
+                  <label className={labelCls}>Drive / Company Name *</label>
                   <input
                     type="text"
                     placeholder="e.g. TCS Technical Placement 2026"
                     value={driveForm.driveName}
                     onChange={(e) => setDriveForm({ ...driveForm, driveName: e.target.value })}
-                    className="w-full p-3 rounded-xl border border-[#E2DFD8] bg-[#FAF9F5] text-xs focus:outline-none focus:border-[#1D5DFF]"
                     required
+                    className={inputCls}
                   />
                 </div>
-
                 <div>
-                  <label className="block text-xs font-semibold text-[#6E6D68] uppercase tracking-wider mb-1">
-                    Drive Access Code (Optional)
-                  </label>
+                  <label className={labelCls}>Drive Access Code</label>
                   <input
                     type="text"
-                    placeholder="e.g. TCS-2026 (Auto-generated if blank)"
+                    placeholder="e.g. TCS-2026"
                     value={driveForm.driveCode}
                     onChange={(e) => setDriveForm({ ...driveForm, driveCode: e.target.value })}
-                    className="w-full p-3 rounded-xl border border-[#E2DFD8] bg-[#FAF9F5] text-xs font-mono focus:outline-none focus:border-[#1D5DFF]"
+                    className={inputCls}
                   />
                 </div>
-
                 <div>
-                  <label className="block text-xs font-semibold text-[#6E6D68] uppercase tracking-wider mb-1">
-                    Target Engineering Role
-                  </label>
+                  <label className={labelCls}>Target Engineering Role</label>
                   <select
                     value={driveForm.role}
                     onChange={(e) => setDriveForm({ ...driveForm, role: e.target.value })}
-                    className="w-full p-3 rounded-xl border border-[#E2DFD8] bg-[#FAF9F5] text-xs focus:outline-none focus:border-[#1D5DFF]"
+                    className={selectCls}
                   >
+                    <option value="Fullstack Engineer">Fullstack Engineer</option>
                     <option value="Frontend Engineer">Frontend Engineer</option>
                     <option value="Backend Engineer">Backend Engineer</option>
-                    <option value="Fullstack Engineer">Fullstack Engineer</option>
                     <option value="Data Engineer">Data Engineer</option>
-                    <option value="General Systems Engineer">General Systems Engineer</option>
                   </select>
                 </div>
               </div>
 
-              {/* Assessment Rules & Question Sources Grid */}
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 bg-[#FAF9F5] p-5 rounded-2xl border border-[#E2DFD8]">
-                
-                {/* Rule A: Question Bank Source */}
-                <div className="space-y-2">
-                  <span className="text-xs font-bold text-[#161615] block">Question Source Option</span>
-                  <label className="flex items-center gap-2 cursor-pointer text-xs text-[#161615]">
+              <div className="p-5 bg-[#FAF9F5] border border-[#E0DFD9] rounded-xl space-y-4">
+                <span className="font-mono text-xs font-bold uppercase text-[#111110] tracking-wide block">
+                  Question Source Selection
+                </span>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <label className="flex items-center gap-3 p-3.5 bg-white border border-[#E0DFD9] rounded-lg cursor-pointer hover:border-[#1D5DFF] transition-colors">
                     <input
                       type="radio"
                       name="qSource"
@@ -292,9 +268,13 @@ export default function FacultyDashboardPage() {
                       onChange={() => setDriveForm({ ...driveForm, useDefaultQuestions: true })}
                       className="accent-[#1D5DFF]"
                     />
-                    <span>Use System Default Question Bank (Seeded OS/DBMS/DS)</span>
+                    <div>
+                      <div className="text-xs font-bold text-[#111110]">Default Syllabus Question Bank</div>
+                      <div className="text-[11px] text-[#6B7280]">Seed OS, DBMS, OOP, and DSA questions</div>
+                    </div>
                   </label>
-                  <label className="flex items-center gap-2 cursor-pointer text-xs text-[#161615]">
+
+                  <label className="flex items-center gap-3 p-3.5 bg-white border border-[#E0DFD9] rounded-lg cursor-pointer hover:border-[#1D5DFF] transition-colors">
                     <input
                       type="radio"
                       name="qSource"
@@ -302,245 +282,197 @@ export default function FacultyDashboardPage() {
                       onChange={() => setDriveForm({ ...driveForm, useDefaultQuestions: false })}
                       className="accent-[#1D5DFF]"
                     />
-                    <span>Use Custom Faculty Uploaded Questions First</span>
+                    <div>
+                      <div className="text-xs font-bold text-[#111110]">Custom Faculty Uploaded Bank</div>
+                      <div className="text-[11px] text-[#6B7280]">Use college questions uploaded in MongoDB</div>
+                    </div>
                   </label>
-                </div>
-
-                {/* Rule B: Writing Test Toggle */}
-                <div className="space-y-2">
-                  <span className="text-xs font-bold text-[#161615] block">Writing Assessment</span>
-                  <label className="flex items-center gap-2 cursor-pointer text-xs text-[#161615]">
-                    <input
-                      type="checkbox"
-                      checked={driveForm.includeWritingTest}
-                      onChange={(e) => setDriveForm({ ...driveForm, includeWritingTest: e.target.checked })}
-                      className="w-4 h-4 accent-[#1D5DFF]"
-                    />
-                    <span>Include Technical Written Test after Verbal Interview</span>
-                  </label>
-                </div>
-
-                {/* Rule C: Question Count */}
-                <div className="space-y-2">
-                  <span className="text-xs font-bold text-[#161615] block">Verbal Questions Per Student</span>
-                  <select
-                    value={driveForm.questionCount}
-                    onChange={(e) => setDriveForm({ ...driveForm, questionCount: Number(e.target.value) })}
-                    className="w-full p-2.5 rounded-xl border border-[#E2DFD8] bg-white text-xs font-mono"
-                  >
-                    <option value={3}>3 Verbal Questions</option>
-                    <option value={5}>5 Verbal Questions (Recommended)</option>
-                    <option value={10}>10 Verbal Questions</option>
-                  </select>
                 </div>
               </div>
 
-              <div className="flex justify-between items-center pt-2">
-                {createdCode ? (
-                  <div className="text-xs font-mono text-emerald-600 bg-emerald-50 px-3 py-1.5 rounded-lg border border-emerald-200">
-                    Active Share Code: <strong>{createdCode}</strong> (Link: <code>http://localhost:5173/drive/{createdCode}</code>)
-                  </div>
-                ) : <div />}
+              {createdCode && (
+                <div className="p-4 bg-emerald-50 border border-emerald-200 text-emerald-900 rounded-xl font-mono text-xs font-bold">
+                  ✓ Placement Drive Activated! Student Access Code: <span className="text-emerald-700 underline text-sm">{createdCode}</span>
+                </div>
+              )}
 
+              <div className="flex justify-end">
                 <button
                   type="submit"
-                  className="px-6 py-2.5 bg-[#1D5DFF] hover:bg-blue-600 text-white rounded-xl text-xs font-semibold transition-colors shadow-md"
+                  className="bg-[#111110] hover:bg-[#1D5DFF] text-white px-8 py-3 text-sm font-bold rounded-lg transition-all duration-200 shadow-sm active:scale-98"
                 >
                   Create & Activate Placement Drive →
                 </button>
               </div>
             </form>
-          </Card>
+          </div>
         )}
 
-        {/* Tab 2: Single Question Form */}
+        {/* TAB 2: SINGLE QUESTION */}
         {activeTab === "single" && (
-          <Card className="bg-white border border-[#E2DFD8] rounded-2xl p-6 shadow-sm space-y-4">
-            <h2 className="text-lg font-bold text-[#161615]">Add Custom Question to MongoDB</h2>
-            <form onSubmit={handleCreateSingleQuestion} className="space-y-4">
+          <div className="bg-white border border-[#E0DFD9] rounded-2xl p-6 sm:p-8 space-y-6 shadow-sm">
+            <div className="border-b border-[#E0DFD9] pb-4">
+              <h2 className="text-xl font-extrabold text-[#111110]">Add Technical Question</h2>
+              <p className="text-xs text-[#4B5563] font-medium mt-0.5">Define reference keywords and technical rubrics for automated NLP scoring.</p>
+            </div>
+
+            <form onSubmit={handleCreateSingleQuestion} className="space-y-5">
               <div>
-                <label className="block text-xs font-semibold text-[#6E6D68] uppercase tracking-wider mb-1">
-                  Question Text *
-                </label>
+                <label className={labelCls}>Question Prompt *</label>
                 <textarea
+                  rows={3}
+                  placeholder="e.g. Explain how indexing works in MongoDB and compare B-Trees vs. Hash indexes..."
                   value={singleForm.questionText}
                   onChange={(e) => setSingleForm({ ...singleForm, questionText: e.target.value })}
-                  placeholder="e.g. What is deadlock, and what conditions are needed for it to occur?"
-                  className="w-full p-3 rounded-xl border border-[#E2DFD8] bg-[#FAF9F5] text-sm focus:outline-none focus:border-[#1D5DFF]"
-                  rows={3}
                   required
+                  className="w-full bg-[#FAF9F5] border border-[#E0DFD9] p-4 text-sm text-[#111110] font-medium rounded-lg focus:outline-none focus:bg-white focus:border-[#1D5DFF] transition-all"
                 />
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs font-semibold text-[#6E6D68] uppercase tracking-wider mb-1">
-                    Expected Concept Keywords (Comma separated)
-                  </label>
-                  <input
-                    type="text"
-                    value={singleForm.keywords}
-                    onChange={(e) => setSingleForm({ ...singleForm, keywords: e.target.value })}
-                    placeholder="e.g. mutual exclusion, hold and wait, circular wait"
-                    className="w-full p-3 rounded-xl border border-[#E2DFD8] bg-[#FAF9F5] text-sm focus:outline-none focus:border-[#1D5DFF]"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-semibold text-[#6E6D68] uppercase tracking-wider mb-1">
-                    Domain Tags (Comma separated)
-                  </label>
-                  <input
-                    type="text"
-                    value={singleForm.tags}
-                    onChange={(e) => setSingleForm({ ...singleForm, tags: e.target.value })}
-                    placeholder="e.g. os, operating-systems, technical"
-                    className="w-full p-3 rounded-xl border border-[#E2DFD8] bg-[#FAF9F5] text-sm focus:outline-none focus:border-[#1D5DFF]"
-                  />
-                </div>
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-[#6E6D68] uppercase tracking-wider mb-1">
-                  Reference Answer / Ideal Evaluation Response (Optional)
-                </label>
-                <textarea
-                  value={singleForm.referenceAnswer}
-                  onChange={(e) => setSingleForm({ ...singleForm, referenceAnswer: e.target.value })}
-                  placeholder="Ideal technical response breakdown for AI evaluator..."
-                  className="w-full p-3 rounded-xl border border-[#E2DFD8] bg-[#FAF9F5] text-sm focus:outline-none focus:border-[#1D5DFF]"
-                  rows={2}
+                <label className={labelCls}>Expected Keywords / Concept Tokens (Comma-separated)</label>
+                <input
+                  type="text"
+                  placeholder="e.g. B-Tree, indexing, read overhead, compound index, balancing"
+                  value={singleForm.keywords}
+                  onChange={(e) => setSingleForm({ ...singleForm, keywords: e.target.value })}
+                  className={inputCls}
                 />
               </div>
 
-              <div className="pt-2">
-                <Button type="submit" className="bg-[#1D5DFF] text-white px-6 py-2.5 rounded-xl font-medium text-sm">
-                  Save Question to Database
-                </Button>
+              <div>
+                <label className={labelCls}>Model Reference Answer (Optional)</label>
+                <textarea
+                  rows={3}
+                  placeholder="Reference answer used by evaluator to compare semantic depth..."
+                  value={singleForm.referenceAnswer}
+                  onChange={(e) => setSingleForm({ ...singleForm, referenceAnswer: e.target.value })}
+                  className="w-full bg-[#FAF9F5] border border-[#E0DFD9] p-4 text-sm text-[#111110] font-medium rounded-lg focus:outline-none focus:bg-white focus:border-[#1D5DFF] transition-all"
+                />
+              </div>
+
+              <div className="flex justify-end">
+                <button
+                  type="submit"
+                  className="bg-[#111110] hover:bg-[#1D5DFF] text-white px-8 py-3 text-sm font-bold rounded-lg transition-all duration-200 shadow-sm active:scale-98"
+                >
+                  Save Question to Database →
+                </button>
               </div>
             </form>
-          </Card>
+          </div>
         )}
 
-        {/* Tab 3: Bulk Import Workspace */}
+        {/* TAB 3: BULK UPLOAD */}
         {activeTab === "bulk" && (
-          <Card className="bg-white border border-[#E2DFD8] rounded-2xl p-6 shadow-sm space-y-4">
-            <h2 className="text-lg font-bold text-[#161615]">Bulk Question Import (CSV / JSON)</h2>
-            <p className="text-xs text-[#6E6D68]">
-              Upload a <code>.json</code> or <code>.csv</code> file containing multiple interview questions to import them into MongoDB at once.
-            </p>
+          <div className="bg-white border border-[#E0DFD9] rounded-2xl p-6 sm:p-8 space-y-6 shadow-sm">
+            <div className="border-b border-[#E0DFD9] pb-4">
+              <h2 className="text-xl font-extrabold text-[#111110]">Bulk Upload Questions</h2>
+              <p className="text-xs text-[#4B5563] font-medium mt-0.5">Upload a CSV or JSON file to batch import multiple questions simultaneously.</p>
+            </div>
 
-            <div className="border-2 border-dashed border-[#E2DFD8] bg-[#FAF9F5] rounded-xl p-6 text-center hover:border-[#1D5DFF] transition-colors">
-              <input
-                type="file"
-                accept=".csv,.json"
-                onChange={handleFileUpload}
-                className="hidden"
-                id="bulk-file-input-clean"
-              />
-              <label htmlFor="bulk-file-input-clean" className="cursor-pointer flex flex-col items-center">
-                <span className="text-2xl mb-2">📄</span>
-                <span className="text-sm font-semibold text-[#161615]">Click to select CSV or JSON file</span>
-                <span className="text-xs text-[#6E6D68] mt-1">Supports fields: questionText, keywords, referenceAnswer, tags</span>
+            <div className="p-6 border-2 border-dashed border-[#D1D5DB] rounded-xl text-center bg-[#FAF9F5] hover:border-[#1D5DFF] transition-colors cursor-pointer">
+              <input type="file" accept=".csv,.json" onChange={handleFileUpload} className="hidden" id="bulk-file-input" />
+              <label htmlFor="bulk-file-input" className="cursor-pointer flex flex-col items-center gap-2">
+                <div className="w-12 h-12 rounded-xl bg-white border border-[#E0DFD9] flex items-center justify-center font-mono font-bold text-[#1D5DFF]">
+                  CSV
+                </div>
+                <span className="text-xs font-bold text-[#111110]">Click to select .CSV or .JSON question file</span>
+                <span className="text-[11px] text-[#6B7280]">Columns: questionText, keywords, referenceAnswer, tags</span>
               </label>
             </div>
 
-            {jsonInput && (
-              <div>
-                <label className="block text-xs font-semibold text-[#6E6D68] uppercase tracking-wider mb-1">
-                  JSON Payload Preview
-                </label>
-                <textarea
-                  value={jsonInput}
-                  onChange={(e) => setJsonInput(e.target.value)}
-                  className="w-full p-3 rounded-xl border border-[#E2DFD8] bg-[#161615] text-[#F0EEE8] font-mono text-xs focus:outline-none"
-                  rows={8}
-                />
-              </div>
-            )}
-
             {bulkStatus && (
-              <div className="p-3 rounded-xl bg-[#FAF9F5] border border-[#E2DFD8] text-xs font-mono">
+              <div className="p-4 bg-blue-50 border border-blue-200 text-blue-900 rounded-xl font-mono text-xs font-bold">
                 {bulkStatus}
               </div>
             )}
 
-            <div className="pt-2">
-              <button
-                onClick={handleBulkSubmit}
-                disabled={!jsonInput}
-                className="bg-[#1D5DFF] hover:bg-blue-600 disabled:opacity-50 text-white px-6 py-2.5 rounded-xl font-medium text-sm transition-colors shadow-md"
-              >
-                Execute Bulk Import to MongoDB
-              </button>
-            </div>
-          </Card>
-        )}
-
-        {/* MongoDB Question List Workspace */}
-        <Card className="bg-white border border-[#E2DFD8] rounded-2xl p-6 shadow-sm space-y-4">
-          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 border-b border-[#E2DFD8] pb-3">
             <div>
-              <h2 className="text-base font-bold text-[#161615]">
-                Active MongoDB Question Bank ({questions.length} Questions)
-              </h2>
-              <span className="text-xs text-[#6E6D68]">Questions stored in MongoDB for interview practice</span>
-            </div>
-
-            <div className="flex items-center gap-2 w-full sm:w-auto">
-              <input
-                type="text"
-                placeholder="Search database questions..."
-                value={questionSearch}
-                onChange={(e) => setQuestionSearch(e.target.value)}
-                className="px-3 py-1.5 rounded-xl border border-[#E2DFD8] bg-[#FAF9F5] text-xs focus:outline-none w-full sm:w-64"
+              <label className={labelCls}>JSON Input Payload</label>
+              <textarea
+                rows={6}
+                value={jsonInput}
+                onChange={(e) => setJsonInput(e.target.value)}
+                placeholder='[ { "questionText": "What is normalization?", "keywords": "1NF, 2NF, BCNF", "tags": "dbms" } ]'
+                className="w-full bg-[#FAF9F5] border border-[#E0DFD9] p-4 text-xs font-mono text-[#111110] rounded-lg focus:outline-none focus:bg-white focus:border-[#1D5DFF] transition-all"
               />
             </div>
+
+            <div className="flex justify-end">
+              <button
+                type="button"
+                onClick={handleBulkSubmit}
+                disabled={!jsonInput.trim()}
+                className="bg-[#111110] hover:bg-[#1D5DFF] text-white px-8 py-3 text-sm font-bold rounded-lg transition-all duration-200 shadow-sm active:scale-98 disabled:opacity-40"
+              >
+                Execute Bulk Import →
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Existing Questions Table */}
+        <div className="bg-white border border-[#E0DFD9] rounded-2xl p-6 sm:p-8 space-y-4 shadow-sm">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-[#E0DFD9] pb-4">
+            <div>
+              <h2 className="text-lg font-extrabold text-[#111110]">
+                Active Question Bank ({questions.length} Questions)
+              </h2>
+              <p className="text-xs text-[#4B5563] font-medium">Stored in MongoDB question collection for candidate sessions.</p>
+            </div>
+
+            <input
+              type="text"
+              placeholder="Search questions..."
+              value={questionSearch}
+              onChange={(e) => setQuestionSearch(e.target.value)}
+              className="px-4 py-2 border border-[#E0DFD9] bg-[#FAF9F5] rounded-lg text-xs font-semibold text-[#111110] focus:outline-none w-full sm:w-64"
+            />
           </div>
 
           {loadingQuestions ? (
-            <div className="py-8 text-center text-xs text-[#6E6D68]">Loading questions from MongoDB...</div>
+            <div className="py-12 text-center text-xs font-bold text-[#6B7280]">Loading questions...</div>
           ) : questions.length === 0 ? (
-            <div className="py-8 text-center text-xs text-[#6E6D68]">No questions found in MongoDB matching your search.</div>
+            <div className="py-12 text-center text-xs font-bold text-[#6B7280]">No questions found matching criteria.</div>
           ) : (
-            <div className="divide-y divide-[#E2DFD8] max-h-[500px] overflow-y-auto pr-1">
-              {questions.map((q) => (
-                <div key={q._id} className="py-3.5 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
-                  <div className="space-y-1 flex-1">
-                    <div className="font-semibold text-xs text-[#161615] leading-relaxed">
-                      {q.questionText}
-                    </div>
-
-                    <div className="flex flex-wrap items-center gap-2 text-[10px] text-[#6E6D68]">
-                      <span className="font-mono bg-[#FAF9F5] px-2 py-0.5 rounded border border-[#E2DFD8]">
-                        College: {q.college || "Global (Default)"}
-                      </span>
-                      {q.tags && q.tags.map((t, idx) => (
-                        <span key={idx} className="px-2 py-0.5 rounded bg-blue-50 text-[#1D5DFF] font-mono">
-                          #{t}
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs border-collapse">
+                <thead>
+                  <tr className="border-b border-[#E0DFD9] bg-[#FAF9F5] text-[#111110] font-mono text-[10px] uppercase font-bold">
+                    <th className="py-3 px-4">Question Text</th>
+                    <th className="py-3 px-4">Rubric Keywords</th>
+                    <th className="py-3 px-4">Tag</th>
+                    <th className="py-3 px-4 text-right">Action</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-[#E0DFD9]">
+                  {questions.slice(0, 15).map((q) => (
+                    <tr key={q._id} className="hover:bg-[#FAF9F5] transition-colors">
+                      <td className="py-3.5 px-4 font-bold text-[#111110] max-w-xs truncate">{q.questionText}</td>
+                      <td className="py-3.5 px-4 font-mono text-[11px] text-[#4B5563] truncate max-w-[200px]">
+                        {Array.isArray(q.keywords) ? q.keywords.join(", ") : q.keywords || "N/A"}
+                      </td>
+                      <td className="py-3.5 px-4">
+                        <span className="font-mono text-[10px] font-bold uppercase px-2 py-0.5 rounded bg-[#FAF9F5] text-[#111110] border border-[#E0DFD9]">
+                          {q.tags || "General"}
                         </span>
-                      ))}
-                    </div>
-
-                    {q.keywords && q.keywords.length > 0 && (
-                      <div className="text-[11px] text-[#6E6D68]">
-                        <span className="font-medium text-[#161615]">Keywords: </span>
-                        {q.keywords.join(", ")}
-                      </div>
-                    )}
-                  </div>
-
-                  <button
-                    onClick={() => handleDeleteQuestion(q._id)}
-                    className="px-3 py-1.5 rounded-xl border border-red-200 text-red-600 hover:bg-red-50 text-xs font-medium transition-colors"
-                  >
-                    Delete
-                  </button>
-                </div>
-              ))}
+                      </td>
+                      <td className="py-3.5 px-4 text-right">
+                        <button
+                          onClick={() => handleDeleteQuestion(q._id)}
+                          className="text-xs font-bold text-red-600 hover:text-red-800"
+                        >
+                          Delete
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           )}
-        </Card>
+        </div>
 
       </div>
     </div>

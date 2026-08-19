@@ -1,10 +1,11 @@
-import os
+﻿import os
 import re
 import math
 import json
+import asyncio
 import httpx
-from typing import Optional, List
-from fastapi import FastAPI, HTTPException
+from typing import Optional, List, Dict, Any
+from fastapi import FastAPI, HTTPException, File, UploadFile, Form
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from dotenv import load_dotenv
@@ -21,7 +22,7 @@ app.add_middleware(
 )
 
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY") or os.getenv("LLM_API_KEY")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+LLM_MODEL = os.getenv("LLM_MODEL", "nvidia/nemotron-3-super-120b-a12b:free")
 
 
 class NLPRequest(BaseModel):
@@ -30,6 +31,10 @@ class NLPRequest(BaseModel):
     transcript: Optional[str] = None
     questionType: Optional[str] = "mixed"  # 'technical', 'hr', 'mixed', 'resume', 'company'
     keywords: Optional[List[str]] = None
+    expectedConcepts: Optional[List[str]] = None
+    acceptablePatterns: Optional[List[str]] = None
+    commonMisconceptions: Optional[List[str]] = None
+    scoringRubric: Optional[Dict[str, Any]] = None
     referenceAnswer: Optional[str] = None
 
 
@@ -44,9 +49,10 @@ class NLPResult(BaseModel):
     feedback: str
     strengths: List[str]
     improvements: List[str]
+    evaluationEngine: str = "local_nlp"
 
 
-# ── Local NLP Concept & Semantic Analysis Engine ─────────────────────────────
+# ── Local NLP Concept & Semantic Analysis Engine ────────────────────────────────
 
 STOPWORDS = {
   "a", "an", "the", "and", "or", "but", "if", "is", "are", "was", "were", "be",
@@ -104,7 +110,7 @@ def calculate_structure_score(text: str) -> float:
     if not text or len(text.strip()) < 10:
         return 0.0
 
-    score = 30.0  # baseline for a coherent multi-word response
+    score = 30.0
     cleaned = text.strip()
     lower = cleaned.lower()
     lines = [ln.strip() for ln in cleaned.split("\n") if ln.strip()]
@@ -166,57 +172,78 @@ def evaluate_with_local_nlp(
     question: str,
     transcript: str,
     q_type: str = "mixed",
-    keywords: Optional[List[str]] = None
+    keywords: Optional[List[str]] = None,
+    expected_concepts: Optional[List[str]] = None,
+    acceptable_patterns: Optional[List[str]] = None,
+    common_misconceptions: Optional[List[str]] = None,
+    scoring_rubric: Optional[Dict[str, Any]] = None,
+    reference_answer: Optional[str] = None
 ) -> NLPResult:
     transcript_clean = transcript.strip()
     words = tokenize(transcript_clean)
     word_count = len(words)
 
+    # Handle Silence / Empty response
     if not transcript_clean or word_count < 3:
         return NLPResult(
-            relevanceScore=15.0,
-            correctnessScore=10.0,
-            completenessScore=10.0,
-            communicationScore=20.0,
+            relevanceScore=0.0,
+            correctnessScore=0.0,
+            completenessScore=0.0,
+            communicationScore=0.0,
             structureScore=0.0,
             grammarScore=0.0,
-            overallScore=13.8,
-            feedback="The response was too short or quiet to evaluate.",
-            strengths=["Attempted response"],
-            improvements=["Provide a detailed explanation answering the question prompt."]
+            overallScore=0.0,
+            feedback="No verbal response provided.",
+            strengths=[],
+            improvements=["Provide a clear spoken answer to the technical question prompt."],
+            evaluationEngine="local_nlp"
         )
 
     q_tokens = tokenize(question)
     q_tf = get_tf_vector(q_tokens)
     ans_tf = get_tf_vector(words)
 
-    # 1. Relevance Score (Cosine similarity + keyword overlap)
-    raw_sim = calculate_cosine_similarity(q_tf, ans_tf)
+    # 1. Relevance Score
+    raw_q_sim = calculate_cosine_similarity(q_tf, ans_tf)
+    raw_ref_sim = 0.0
+    if reference_answer:
+        ref_tokens = tokenize(reference_answer)
+        ref_tf = get_tf_vector(ref_tokens)
+        raw_ref_sim = calculate_cosine_similarity(ref_tf, ans_tf)
+
+    relevance_sim = max(raw_q_sim, raw_ref_sim) if reference_answer else raw_q_sim
 
     # 2. Concept Matching & Correctness Score
-    matched_keywords = []
-    missing_keywords = []
+    matched_concepts = []
+    missing_concepts = []
+    ans_lower = transcript_clean.lower()
 
-    target_concepts = keywords or []
-    if not target_concepts:
-        # Fallback to non-stopword bigrams/unigrams from question
-        target_concepts = extract_ngrams(question, 2) + q_tokens[:5]
+    target_list = expected_concepts or keywords or []
+    if not target_list:
+        target_list = extract_ngrams(question, 2) + q_tokens[:5]
 
-    if target_concepts:
-        ans_lower = transcript_clean.lower()
-        for concept in target_concepts:
-            c_clean = concept.lower().strip()
-            if c_clean in ans_lower or any(word in ans_lower for word in c_clean.split()):
-                matched_keywords.append(concept)
-            else:
-                missing_keywords.append(concept)
+    for item in target_list:
+        item_clean = item.lower().strip()
+        item_words = tokenize(item_clean)
+        if item_clean in ans_lower or (item_words and sum(1 for w in item_words if w in ans_lower) >= max(1, len(item_words) * 0.6)):
+            matched_concepts.append(item)
+        else:
+            missing_concepts.append(item)
 
-        match_ratio = len(matched_keywords) / len(target_concepts) if target_concepts else 0.0
-    else:
-        match_ratio = 0.0
+    concept_match_ratio = len(matched_concepts) / len(target_list) if target_list else 0.0
+
+    # Misconception Check
+    detected_misconceptions = []
+    misconception_penalty = 0.0
+    if common_misconceptions:
+        for misc in common_misconceptions:
+            m_words = tokenize(misc.lower())
+            if m_words and sum(1 for w in m_words if w in ans_lower) >= max(2, len(m_words) * 0.7):
+                detected_misconceptions.append(misc)
+                misconception_penalty += 15.0
 
     # Strict check for gibberish or non-relevant input
-    if raw_sim < 0.05 and match_ratio == 0:
+    if relevance_sim < 0.05 and concept_match_ratio == 0:
         return NLPResult(
             relevanceScore=0.0,
             correctnessScore=0.0,
@@ -227,78 +254,83 @@ def evaluate_with_local_nlp(
             overallScore=0.0,
             feedback="Response contains invalid, non-relevant, or gibberish text.",
             strengths=[],
-            improvements=["Provide a meaningful technical answer addressing the question prompt."]
+            improvements=["Provide a meaningful technical answer addressing the question prompt."],
+            evaluationEngine="local_nlp"
         )
 
-    relevance_score = min(98.0, round((raw_sim * 100), 1))
-    correctness_score = min(98.0, round((match_ratio * 100.0), 1))
+    relevance_score = min(98.0, round(relevance_sim * 100, 1))
+    correctness_score = min(98.0, max(0.0, round((concept_match_ratio * 100.0) - misconception_penalty, 1)))
 
     # 3. Completeness Score
-    if word_count >= 60:
-        completeness_score = 90.0
-    elif word_count >= 30:
-        completeness_score = 80.0
+    if word_count >= 50 and concept_match_ratio >= 0.5:
+        completeness_score = 92.0
+    elif word_count >= 30 and concept_match_ratio >= 0.3:
+        completeness_score = 78.0
     elif word_count >= 15:
-        completeness_score = 65.0
+        completeness_score = 60.0
     elif word_count >= 5:
-        completeness_score = 40.0
+        completeness_score = 35.0
     else:
         completeness_score = 10.0
 
     # 4. Communication & Structure Score
-    connector_matches = [c for c in CONNECTORS if c in transcript_clean.lower()]
+    connector_matches = [c for c in CONNECTORS if c in ans_lower]
     star_score = 0
     for category, indicators in STAR_INDICATORS.items():
-        if any(ind in transcript_clean.lower() for ind in indicators):
+        if any(ind in ans_lower for ind in indicators):
             star_score += 1
 
     structure_bonus = min(20.0, len(connector_matches) * 5.0 + star_score * 5.0)
-    communication_score = min(96.0, round((match_ratio * 40.0) + structure_bonus + 30.0, 1))
+    communication_score = min(96.0, round((concept_match_ratio * 30.0) + structure_bonus + 40.0, 1))
 
-    # 4b. Structure & Grammar Scores (heuristic, zero-dependency)
     structure_score = calculate_structure_score(transcript_clean)
     grammar_score = calculate_grammar_score(transcript_clean)
 
-    # 5. Composite Overall Score
+    # 5. Dynamic Weighted Composite Score
+    rubric = scoring_rubric or {}
+    r_wt = rubric.get("relevanceWeight", 0.25)
+    c_wt = rubric.get("conceptWeight", 0.35)
+    comp_wt = rubric.get("completenessWeight", 0.20)
+    s_wt = rubric.get("structureWeight", 0.20)
+
     overall_score = round(
-        (relevance_score * 0.25) +
-        (correctness_score * 0.35) +
-        (completeness_score * 0.20) +
-        (communication_score * 0.20),
+        (relevance_score * r_wt) +
+        (correctness_score * c_wt) +
+        (completeness_score * comp_wt) +
+        (communication_score * s_wt),
         1
     )
 
-    # 6. Dynamic Strengths & Improvements Generation
+    # 6. Dynamic Strengths & Actionable Improvements
     strengths = []
     improvements = []
 
-    if matched_keywords:
-        strengths.append(f"Successfully incorporated key domain concepts: {', '.join(matched_keywords[:3])}.")
+    if matched_concepts:
+        clean_strengths = [c for c in matched_concepts if c.lower() not in STOPWORDS]
+        if clean_strengths:
+            strengths.append(f"Successfully incorporated key domain concepts: {', '.join(clean_strengths[:3])}.")
     if len(connector_matches) > 0:
-        strengths.append("Used logical transition connectors to structure the response.")
-    if word_count >= 40:
-        strengths.append("Provided a comprehensive answer with sufficient detail.")
-
+        strengths.append("Used structured transition connectors to articulate technical reasoning.")
+    if word_count >= 35 and concept_match_ratio >= 0.5:
+        strengths.append("Provided a comprehensive answer with strong technical depth.")
     if not strengths:
-        strengths.append("Addressed the question prompt directly.")
+        strengths.append("Attempted the technical prompt directly.")
 
-    if missing_keywords:
-        improvements.append(f"Consider explicitly mentioning concepts like: {', '.join(missing_keywords[:3])}.")
-    if word_count < 30:
-        improvements.append("Elaborate further with specific examples or technical implementation details.")
+    if missing_concepts:
+        clean_missing = [c for c in missing_concepts if c.lower() not in STOPWORDS]
+        if clean_missing:
+            improvements.append(f"Consider explicitly detailing: {', '.join(clean_missing[:3])}.")
+    if detected_misconceptions:
+        for misc in detected_misconceptions:
+            improvements.append(f"Clarify distinction: {misc}.")
+    if word_count < 25:
+        improvements.append("Elaborate further with specific architectural or code implementation examples.")
     if len(connector_matches) == 0:
-        improvements.append("Use structured connective phrases (e.g. 'firstly', 'specifically', 'as a result') to improve verbal clarity.")
-    if grammar_score < 65:
-        improvements.append("Review sentence construction: fix run-on sentences, capitalization, and punctuation for clearer grammar.")
-    if structure_score < 55:
-        improvements.append("Organize the response into clear sections with transitions (intro, body, conclusion).")
-
-    if not improvements:
-        improvements.append("Maintain this high level of technical precision and structured communication.")
+        improvements.append("Use structured connective phrases (e.g. 'specifically', 'for instance', 'consequently') to improve clarity.")
 
     feedback = (
-        f"Solid response. You demonstrated understanding of the prompt. "
-        f"{'Key concepts like ' + ', '.join(matched_keywords[:2]) + ' were explained well.' if matched_keywords else ''}"
+        f"Technical response evaluated. "
+        f"{'Key concepts like ' + ', '.join(matched_concepts[:2]) + ' were explained accurately.' if matched_concepts else 'Elaborate further on core principles.'}"
     ).strip()
 
     return NLPResult(
@@ -311,73 +343,29 @@ def evaluate_with_local_nlp(
         overallScore=overall_score,
         feedback=feedback,
         strengths=strengths,
-        improvements=improvements
+        improvements=improvements,
+        evaluationEngine="local_nlp"
     )
 
 
-async def evaluate_with_llm(
-    question: str,
-    transcript: str,
-    q_type: str = "mixed",
-    keywords: Optional[List[str]] = None
-) -> Optional[NLPResult]:
-    """
-    Evaluates transcript using OpenRouter / OpenAI API if configured in .env.
-    """
-    api_key = OPENROUTER_API_KEY or OPENAI_API_KEY
-    if not api_key:
-        return None
+@app.post("/analyze")
+async def analyze_nlp(body: NLPRequest):
+    input_transcript = body.transcript or body.text or ""
+    input_question = body.question or "Interview Practice Question"
 
-    endpoint = "https://openrouter.ai/api/v1/chat/completions" if OPENROUTER_API_KEY else "https://api.openai.com/v1/chat/completions"
-    model_name = "google/gemini-2.5-flash" if OPENROUTER_API_KEY else "gpt-4o-mini"
+    local_result = evaluate_with_local_nlp(
+        question=input_question,
+        transcript=input_transcript,
+        q_type=body.questionType or "mixed",
+        keywords=body.keywords,
+        expected_concepts=body.expectedConcepts,
+        acceptable_patterns=body.acceptablePatterns,
+        common_misconceptions=body.commonMisconceptions,
+        scoring_rubric=body.scoringRubric,
+        reference_answer=body.referenceAnswer
+    )
 
-    prompt = f"""
-    You are an expert technical and HR interviewer evaluating a candidate's answer.
-    
-    QUESTION: "{question}"
-    QUESTION TYPE: {q_type}
-    EXPECTED CONCEPTS/KEYWORDS: {json.dumps(keywords or [])}
-    CANDIDATE TRANSCRIPT: "{transcript}"
-    
-    Evaluate the response and return ONLY valid JSON matching this exact structure:
-    {{
-      "relevanceScore": 0-100,
-      "correctnessScore": 0-100,
-      "completenessScore": 0-100,
-      "communicationScore": 0-100,
-      "structureScore": 0-100,
-      "grammarScore": 0-100,
-      "overallScore": 0-100,
-      "feedback": "Constructive 2-sentence summary feedback.",
-      "strengths": ["Strength 1", "Strength 2"],
-      "improvements": ["Improvement 1", "Improvement 2"]
-    }}
-    """
-
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json"
-    }
-    payload = {
-        "model": model_name,
-        "messages": [{"role": "user", "content": prompt}],
-        "temperature": 0.2,
-        "response_format": {"type": "json_object"} if not OPENROUTER_API_KEY else None
-    }
-
-    try:
-        async with httpx.AsyncClient(timeout=20.0) as client:
-            res = await client.post(endpoint, json=payload, headers=headers)
-            if res.status_code == 200:
-                data = res.json()
-                content = data["choices"][0]["message"]["content"]
-                # Parse JSON block
-                clean_json = re.sub(r"```json|```", "", content).strip()
-                parsed = json.loads(clean_json)
-                return NLPResult(**parsed)
-    except Exception as e:
-        print(f"[NLP Service] LLM API evaluation error: {e}. Falling back to Local NLP.")
-        return None
+    return {"success": True, "data": local_result.model_dump()}
 
 
 @app.get("/health")
@@ -388,12 +376,11 @@ async def health():
             "status": "OK",
             "service": "nlp-service",
             "port": 8003,
-            "has_llm_key": bool(OPENROUTER_API_KEY or OPENAI_API_KEY)
+            "has_llm_key": bool(OPENROUTER_API_KEY)
         }
     }
 
 
-from fastapi import File, UploadFile, Form
 from resume_parser import extract_text_from_bytes, synthesize_questions_from_resume
 
 class ResumeQuestionRequest(BaseModel):
@@ -415,80 +402,88 @@ async def generate_resume_questions_endpoint(body: ResumeQuestionRequest):
             "questions": res["questions"],
             "domainTags": res["domainTags"],
             "skills": res["skills"],
-            "extractedText": resume_text
+            "projects": res.get("projects", []),
+            "rawText": resume_text,
+            "summary": res["summary"]
         }
     }
 
 
 @app.post("/extract-and-generate-resume-questions")
-async def extract_and_generate_resume(
+async def extract_and_generate_resume_questions_endpoint(
     file: UploadFile = File(...),
-    role: Optional[str] = Form("Software Engineer"),
-    count: Optional[int] = Form(5)
+    role: str = Form("Software Engineer"),
+    count: int = Form(5)
 ):
-    try:
-        content = await file.read()
-        extracted_text = extract_text_from_bytes(content, file.filename or "resume.docx")
-        res = synthesize_questions_from_resume(extracted_text, role, count)
-        return {
-            "success": True,
-            "data": {
-                "questions": res["questions"],
-                "domainTags": res["domainTags"],
-                "skills": res["skills"],
-                "extractedText": extracted_text,
-                "filename": file.filename
-            }
+    file_bytes = await file.read()
+    extracted_text = extract_text_from_bytes(file_bytes, file.filename or "resume.pdf")
+    res = synthesize_questions_from_resume(extracted_text, role, count)
+    return {
+        "success": True,
+        "data": {
+            "extractedText": extracted_text,
+            "rawText": extracted_text,
+            "questions": res.get("questions", []),
+            "domainTags": res.get("domainTags", []),
+            "skills": res.get("skills", []),
+            "projects": res.get("projects", []),
+            "summary": res.get("summary", "")
         }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to parse resume file: {str(e)}")
+    }
 
 
-from cse_evaluator import evaluate_with_cse_slm, init_cse_slm_evaluator
+# ── LLM Router Endpoints for Project Context & Dynamic Follow-ups ───────────────
+from llm_router import (
+    generate_project_questions_llm,
+    generate_project_followup_llm,
+    evaluate_project_answer_llm
+)
 
+class ProjectQuestionsRequest(BaseModel):
+    projects: List[Dict[str, Any]]
+    role: Optional[str] = "Software Engineer"
+    count: Optional[int] = 2
 
-@app.post("/analyze")
-async def analyze_nlp(body: NLPRequest):
-    input_transcript = body.transcript or body.text or ""
-    input_question = body.question or "Interview Practice Question"
+class ProjectFollowUpRequest(BaseModel):
+    projectContext: Dict[str, Any]
+    question: str
+    answer: str
+    previousFollowUps: Optional[List[Dict[str, str]]] = None
+    turnCount: Optional[int] = 1
 
-    # 1. Try Local Quantized Qwen2.5-Coder CSE SLM Model (100% Free Local CPU Engine)
-    try:
-        slm_result = evaluate_with_cse_slm(
-            question=input_question,
-            transcript=input_transcript,
-            role=body.questionType or "Software Engineer",
-            keywords=body.keywords,
-            reference_answer=body.referenceAnswer or ""
-        )
-        if slm_result:
-            return {"success": True, "data": slm_result}
-    except Exception as slm_err:
-        print(f"[NLP Service] CSE SLM fallback trigger: {slm_err}")
+class ProjectEvaluateRequest(BaseModel):
+    projectContext: Dict[str, Any]
+    question: str
+    answer: str
+    isFollowUp: Optional[bool] = False
 
-    # 2. Try LLM API evaluation if key configured
-    if OPENROUTER_API_KEY or OPENAI_API_KEY:
-        llm_result = await evaluate_with_llm(
-            question=input_question,
-            transcript=input_transcript,
-            q_type=body.questionType or "mixed",
-            keywords=body.keywords
-        )
-        if llm_result:
-            return {"success": True, "data": llm_result.model_dump()}
+@app.post("/generate-project-questions")
+async def generate_project_questions_endpoint(body: ProjectQuestionsRequest):
+    questions = await generate_project_questions_llm(body.projects, body.role or "Software Engineer", body.count or 2)
+    return {"success": True, "data": {"questions": questions}}
 
-    # 3. Local Hybrid NLP Engine Fallback
-    local_result = evaluate_with_local_nlp(
-        question=input_question,
-        transcript=input_transcript,
-        q_type=body.questionType or "mixed",
-        keywords=body.keywords
+@app.post("/generate-project-followup")
+async def generate_project_followup_endpoint(body: ProjectFollowUpRequest):
+    followup = await generate_project_followup_llm(
+        project_context=body.projectContext,
+        original_question=body.question,
+        candidate_answer=body.answer,
+        previous_followups=body.previousFollowUps,
+        turn_count=body.turnCount or 1
     )
+    return {"success": True, "data": followup}
 
-    return {"success": True, "data": local_result.model_dump()}
+@app.post("/evaluate-project-answer")
+async def evaluate_project_answer_endpoint(body: ProjectEvaluateRequest):
+    eval_res = await evaluate_project_answer_llm(
+        project_context=body.projectContext,
+        question=body.question,
+        answer=body.answer,
+        is_followup=body.isFollowUp or False
+    )
+    return {"success": True, "data": eval_res}
 
-
-if __name__ == "__main__":
+if __name__ == '__main__':
     import uvicorn
-    port = int(os.getenv("PORT", 8003))
-    uvicorn.run("main:app", host="0.0.0.0", port=port, reload=True)
+    port = int(os.getenv('PORT', 8003))
+    uvicorn.run('main:app', host='0.0.0.0', port=port, reload=True)

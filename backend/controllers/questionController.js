@@ -1,25 +1,17 @@
-import Session from "../models/Session.js";
 import Question from "../models/Question.js";
-import { sendSuccess, sendError } from "../utils/response.js";
+import Session from "../models/Session.js";
 import {
-  HR_QUESTIONS,
   TECHNICAL_QUESTION_BANK,
+  HR_QUESTIONS,
   getTopicsForRole,
+  getRandomQuestions,
 } from "../data/questionBanks.js";
+import { generateProjectQuestions } from "../services/llmService.js";
+import { sendSuccess, sendError } from "../utils/response.js";
 
-function getRandomQuestions(bank, count) {
-  const shuffled = [...bank].sort(() => 0.5 - Math.random());
-  return shuffled.slice(0, count);
-}
-
-// ── POST /api/sessions/:sessionId/questions ─────────────────────────────────
 export const generateQuestions = async (req, res) => {
   try {
     const { sessionId } = req.params;
-
-    if (!req.user) {
-      return sendError(res, "Access token required", 401);
-    }
 
     const session = await Session.findOne({
       _id: sessionId,
@@ -27,6 +19,8 @@ export const generateQuestions = async (req, res) => {
     });
 
     if (!session) return sendError(res, "Session not found", 404);
+
+    // Fast-path: Return existing questions immediately if already generated
     if (session.answers && session.answers.length > 0) {
       return sendSuccess(
         res,
@@ -41,83 +35,157 @@ export const generateQuestions = async (req, res) => {
     const userCollege = req.user.college || session.college || null;
     const count = session.questionCount || 5;
 
-    // Handle Resume-Based Interview Mode — Dynamic Domain Tag & Resume Synthesis
+    // ── Multi-Track Resume Interview Assembly ──────────────────────────────
     if (type === "resume") {
       try {
         const axios = (await import("axios")).default;
         const NLP_SERVICE_URL = process.env.NLP_SERVICE_URL || "http://127.0.0.1:8003";
-        
-        const nlpRes = await axios.post(`${NLP_SERVICE_URL}/generate-resume-questions`, {
-          resumeText: session.resumeText || session.role || "Software Engineering Experience",
-          role,
-          count
-        }, { timeout: 10000 });
+
+        const nlpRes = await axios.post(
+          `${NLP_SERVICE_URL}/generate-resume-questions`,
+          {
+            resumeText: session.resumeText || session.role || "Software Engineering Experience",
+            role,
+            count,
+          },
+          { timeout: 15000 }
+        );
 
         const nlpData = nlpRes.data?.data || {};
         const domainTags = nlpData.domainTags || [];
-        const resumeQuestions = nlpData.questions || [];
+        const resumeProjects = nlpData.projects || [];
+        let projectQuestions = (nlpData.questions || []).filter((q) => q.track === "project");
+        const fallbackResumeQuestions = nlpData.questions || [];
 
-        let matchedDbQuestions = [];
+        // Track 3: Prefer LLM-generated project questions grounded in the resume projects
+        if (resumeProjects.length > 0) {
+          try {
+            const llmProjectQuestions = await generateProjectQuestions(
+              resumeProjects,
+              role,
+              Math.min(2, count),
+            );
+            if (Array.isArray(llmProjectQuestions) && llmProjectQuestions.length > 0) {
+              projectQuestions = llmProjectQuestions;
+            }
+          } catch (llmProjErr) {
+            console.warn("[QuestionEngine] LLM project question generation failed, using resume templates:", llmProjErr.message);
+          }
+        }
+
+        const assembledQuestions = [];
+
+        // Track 1: HR Behavioral Question (1 question from DB)
+        const hrDbQuestions = await Question.find({
+          $or: [{ track: "hr" }, { tags: { $in: ["hr", "behavioral"] } }],
+        }).lean();
+
+        if (hrDbQuestions.length > 0) {
+          const selectedHr = getRandomQuestions(hrDbQuestions, 1)[0];
+          assembledQuestions.push({
+            questionText: selectedHr.questionText,
+            track: "hr",
+            expectedKeywords: selectedHr.keywords || [],
+            expectedConcepts: selectedHr.expectedConcepts || [],
+            referenceAnswer: selectedHr.referenceAnswer || "",
+          });
+        }
+
+        // Track 2: Core Subject Questions matching Resume Skills (2 questions from DB)
+        let subjectQuery = {
+          $or: [{ college: null }, { college: { $exists: false } }],
+        };
         if (domainTags.length > 0) {
-          console.log(`[ResumeEngine] Extracted domain tags from resume: ${domainTags.join(", ")}`);
-          matchedDbQuestions = await Question.find({ tags: { $in: domainTags } }).lean();
+          subjectQuery.tags = { $in: domainTags };
+        } else {
+          subjectQuery.tags = { $in: ["os", "dbms", "oop", "networking", "ds"] };
         }
 
-        let combinedPool = [];
-
-        // 1. First add default MongoDB questions matching the candidate's resume domain tags (e.g. DBMS, OOPS)
-        if (matchedDbQuestions.length > 0) {
-          console.log(`[ResumeEngine] Found ${matchedDbQuestions.length} MongoDB questions matching candidate resume domains (${domainTags.join(", ")})`);
-          combinedPool.push(...matchedDbQuestions.map((q) => ({
-            questionText: q.questionText,
-            expectedKeywords: q.keywords || [],
-            referenceAnswer: q.referenceAnswer || "",
-          })));
+        const subjectDbQuestions = await Question.find(subjectQuery).lean();
+        if (subjectDbQuestions.length > 0) {
+          const selectedSubjects = getRandomQuestions(subjectDbQuestions, Math.min(2, count - 1));
+          for (const s of selectedSubjects) {
+            assembledQuestions.push({
+              questionText: s.questionText,
+              track: "subject",
+              expectedKeywords: s.keywords || [],
+              expectedConcepts: s.expectedConcepts || [],
+              referenceAnswer: s.referenceAnswer || "",
+            });
+          }
         }
 
-        // 2. Next add personalized resume project questions synthesized by NLP
-        combinedPool.push(...resumeQuestions.map((q) => ({
-          questionText: q.questionText,
-          expectedKeywords: q.keywords || [],
-          referenceAnswer: q.referenceAnswer || "",
-        })));
+        // Track 3: Project-Specific Questions from Resume Projects (1-2 questions)
+        if (projectQuestions.length > 0) {
+          for (const p of projectQuestions.slice(0, 2)) {
+            assembledQuestions.push({
+              questionText: p.questionText,
+              track: "project",
+              expectedKeywords: p.keywords || [],
+              expectedConcepts: p.expectedConcepts || [],
+              referenceAnswer: p.referenceAnswer || "",
+              projectContext: p.projectContext || null,
+            });
+          }
+        } else if (fallbackResumeQuestions.length > 0) {
+          for (const f of fallbackResumeQuestions.slice(0, 2)) {
+            assembledQuestions.push({
+              questionText: f.questionText,
+              track: f.track || "project",
+              expectedKeywords: f.keywords || [],
+              expectedConcepts: f.expectedConcepts || [],
+              referenceAnswer: f.referenceAnswer || "",
+              projectContext: f.projectContext || null,
+            });
+          }
+        }
 
-        // Deduplicate combined pool by questionText
+        // Deduplicate assembled questions by question text
         const uniqueMap = new Map();
-        combinedPool.forEach((q) => {
+        assembledQuestions.forEach((q) => {
           if (q && q.questionText && !uniqueMap.has(q.questionText.trim().toLowerCase())) {
             uniqueMap.set(q.questionText.trim().toLowerCase(), q);
           }
         });
-        let uniquePool = Array.from(uniqueMap.values());
+        let finalResumePool = Array.from(uniqueMap.values());
 
-        // If uniquePool is smaller than requested count, fill with default DB questions
-        if (uniquePool.length < count) {
-          const globalDbQuestions = await Question.find({
+        // Pad if needed up to requested count
+        if (finalResumePool.length < count) {
+          const extraDbQuestions = await Question.find({
             $or: [{ college: null }, { college: { $exists: false } }],
           }).lean();
-
-          globalDbQuestions.forEach((q) => {
-            const normText = (q.questionText || "").trim().toLowerCase();
-            if (normText && !uniqueMap.has(normText)) {
-              uniqueMap.set(normText, {
-                questionText: q.questionText,
-                expectedKeywords: q.keywords || [],
-                referenceAnswer: q.referenceAnswer || "",
+          for (const extra of extraDbQuestions) {
+            if (finalResumePool.length >= count) break;
+            const norm = extra.questionText.trim().toLowerCase();
+            if (!uniqueMap.has(norm)) {
+              uniqueMap.set(norm, extra);
+              finalResumePool.push({
+                questionText: extra.questionText,
+                track: extra.track || "subject",
+                expectedKeywords: extra.keywords || [],
+                expectedConcepts: extra.expectedConcepts || [],
+                referenceAnswer: extra.referenceAnswer || "",
               });
             }
-          });
-          uniquePool = Array.from(uniqueMap.values());
+          }
         }
 
-        const selectedResumeQuestions = getRandomQuestions(uniquePool, Math.min(count, uniquePool.length));
-
-        const answers = selectedResumeQuestions.map((q, idx) => ({
-          questionId: `resume-q-${Date.now()}-${idx}`,
+        // Deterministic question IDs keyed by session ID and index
+        const answers = finalResumePool.slice(0, count).map((q, idx) => ({
+          questionId: `resume-q-${session._id}-${idx}`,
           questionText: q.questionText,
+          track: q.track || "subject",
           expectedKeywords: q.expectedKeywords || [],
+          expectedConcepts: q.expectedConcepts || [],
           referenceAnswer: q.referenceAnswer || "",
+          projectContext: q.projectContext || null,
         }));
+
+        // Concurrency Guard: Check if another request finished first
+        const freshSession = await Session.findById(session._id);
+        if (freshSession && freshSession.answers && freshSession.answers.length > 0) {
+          return sendSuccess(res, { session: freshSession, questions: freshSession.answers }, 200);
+        }
 
         const updatedSession = await Session.findByIdAndUpdate(
           session._id,
@@ -125,17 +193,18 @@ export const generateQuestions = async (req, res) => {
           { new: true }
         );
 
+        console.log(`[ResumeEngine] Assembled ${answers.length} multi-track questions for Session ${session._id}`);
         return sendSuccess(res, { session: updatedSession, questions: updatedSession.answers }, 201);
       } catch (resumeErr) {
-        console.warn("[QuestionEngine] Resume question synthesis fallback:", resumeErr.message);
+        console.warn("[QuestionEngine] Resume question synthesis error, falling back:", resumeErr.message);
       }
     }
 
+    // ── Standard Technical & HR Interview Modes ─────────────────────────────
     let adminCustomQuestions = [];
     let defaultDbQuestions = [];
 
     try {
-      // 1. Check for Admin/Faculty uploaded custom questions (matching college or tagged)
       const customQuery = {};
       if (userCollege) {
         customQuery.college = userCollege;
@@ -152,7 +221,6 @@ export const generateQuestions = async (req, res) => {
         adminCustomQuestions = await Question.find(customQuery).lean();
       }
 
-      // 2. Fetch default/global MongoDB questions as fallback pool
       const defaultQuery = {
         $or: [{ college: null }, { college: { $exists: false } }],
       };
@@ -167,34 +235,33 @@ export const generateQuestions = async (req, res) => {
       console.warn("MongoDB question query fallback:", dbErr.message);
     }
 
-    // 3. Selection Hierarchy: Custom Admin Questions FIRST -> Default DB Questions SECOND -> Hardcoded Fallback THIRD
     let selectedPool = [];
 
     if (adminCustomQuestions && adminCustomQuestions.length > 0) {
-      console.log(`[QuestionEngine] Found ${adminCustomQuestions.length} Admin/Faculty custom questions for college: ${userCollege}`);
       selectedPool = adminCustomQuestions.map((q) => ({
         questionText: q.questionText,
+        track: q.track || (type === "hr" ? "hr" : "subject"),
         expectedKeywords: q.keywords || [],
+        expectedConcepts: q.expectedConcepts || [],
         referenceAnswer: q.referenceAnswer || "",
         isCustom: true,
       }));
     }
 
-    // If custom questions are fewer than requested count, fill remaining from default MongoDB questions
     if (selectedPool.length < count && defaultDbQuestions.length > 0) {
       const defaultPool = defaultDbQuestions.map((q) => ({
         questionText: q.questionText,
+        track: q.track || (type === "hr" ? "hr" : "subject"),
         expectedKeywords: q.keywords || [],
+        expectedConcepts: q.expectedConcepts || [],
         referenceAnswer: q.referenceAnswer || "",
         isCustom: false,
       }));
 
-      // Shuffle default pool to pick unique non-duplicate questions
       const shuffledDefaults = getRandomQuestions(defaultPool, count - selectedPool.length);
       selectedPool = [...selectedPool, ...shuffledDefaults];
     }
 
-    // Hardcoded static bank fallback if DB is completely empty
     if (selectedPool.length === 0) {
       let fallbackTextList = [];
       if (type === "hr") {
@@ -206,7 +273,9 @@ export const generateQuestions = async (req, res) => {
 
       selectedPool = fallbackTextList.map((txt) => ({
         questionText: txt,
+        track: type === "hr" ? "hr" : "subject",
         expectedKeywords: [],
+        expectedConcepts: [],
         referenceAnswer: "",
         isCustom: false,
       }));
@@ -214,17 +283,25 @@ export const generateQuestions = async (req, res) => {
 
     const finalSelected = getRandomQuestions(selectedPool, count);
 
-    // Fill remaining if pool size was smaller than count
     while (finalSelected.length < count && selectedPool.length > 0) {
       finalSelected.push(selectedPool[Math.floor(Math.random() * selectedPool.length)]);
     }
 
+    // Deterministic question IDs keyed by session ID and index
     const answers = finalSelected.map((q, index) => ({
-      questionId: `q-${Date.now()}-${index}`,
+      questionId: `q-${session._id}-${index}`,
       questionText: q.questionText,
+      track: q.track || (type === "hr" ? "hr" : "subject"),
       expectedKeywords: q.expectedKeywords || [],
+      expectedConcepts: q.expectedConcepts || [],
       referenceAnswer: q.referenceAnswer || "",
     }));
+
+    // Concurrency Guard: Check if another request finished first
+    const freshSession = await Session.findById(session._id);
+    if (freshSession && freshSession.answers && freshSession.answers.length > 0) {
+      return sendSuccess(res, { session: freshSession, questions: freshSession.answers }, 200);
+    }
 
     const updatedSession = await Session.findByIdAndUpdate(
       session._id,

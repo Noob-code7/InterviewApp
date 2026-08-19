@@ -113,3 +113,5 @@ export const storageService = {
     return true
   },
 }
+
+export default storageService;

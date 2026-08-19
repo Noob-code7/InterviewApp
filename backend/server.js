@@ -1,7 +1,7 @@
 import 'dotenv/config'
 import app from './app.js'
 import connectDB from './config/db.js'
-import { recoverJobs } from './services/analysisService.js'
+import { recoverJobs, startRecoverySweep } from './services/analysisService.js'
 
 const PORT = process.env.PORT || 5000
 
@@ -12,6 +12,9 @@ connectDB().then(async () => {
   } catch (err) {
     console.error('Failed to run job recovery:', err)
   }
+
+  // Recover sessions stuck in 'processing' (e.g. after a crash/reboot)
+  startRecoverySweep()
 
   app.listen(PORT, () => {
     console.log(`🚀 Server running on port ${PORT}`)

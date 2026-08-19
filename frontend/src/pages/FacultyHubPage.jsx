@@ -1,149 +1,82 @@
 import { Link } from "react-router-dom";
-import { Card } from "../components/ui/index.js";
+
+const PORTAL_ITEMS = [
+  {
+    to: "/faculty/dashboard",
+    tag: "DRIVES & CONFIG",
+    label: "Placement Drives & Configuration",
+    desc: "Configure placement drive codes (e.g. TCS-2026), customize question counts, toggle written assessment rubrics, and assign custom question banks.",
+    action: "Configure Drives →",
+  },
+  {
+    to: "/admin/questions",
+    tag: "QUESTION REPOSITORY",
+    label: "Question Bank & Bulk Upload",
+    desc: "Create single technical questions with keyword rubrics, or drag & drop bulk CSV / JSON files directly into the MongoDB question database.",
+    action: "Manage Question Bank →",
+  },
+  {
+    to: "/faculty/reports",
+    tag: "STUDENT ROSTER",
+    label: "Student Roster & Proctoring Reports",
+    desc: "Monitor student candidates by Name, Roll Number, and Department. Audit visual biometric proctoring alerts and export CSV placement rosters.",
+    action: "View Student Roster →",
+  },
+];
 
 export default function FacultyHubPage() {
   return (
-    <div className="min-h-screen bg-[#F6F5F0] text-[#161615] p-6 lg:p-10 font-sans">
-      <div className="max-w-7xl mx-auto space-y-10">
-        
-        {/* Header Hero Section */}
-        <div className="bg-white border border-[#E2DFD8] rounded-3xl p-8 shadow-sm space-y-3">
-          <span className="px-3.5 py-1 rounded-full text-xs font-semibold uppercase tracking-wider bg-blue-50 text-[#1D5DFF] border border-blue-100">
-            Faculty & Administrative Command Portal
+    <div className="min-h-screen bg-[#F6F5F0] text-[#111110] font-sans pt-10 pb-20 px-6">
+      <div className="max-w-5xl mx-auto space-y-8 animate-fade-in">
+
+        {/* Header Hero */}
+        <div className="bg-white border border-[#E0DFD9] rounded-2xl p-6 sm:p-8 shadow-sm">
+          <span className="font-mono text-xs font-bold uppercase text-[#1D5DFF] tracking-wider block mb-1">
+            FACULTY & ADMINISTRATIVE WORKSPACE
           </span>
-          <h1 className="text-3xl lg:text-4xl font-extrabold text-[#161615] tracking-tight">
+          <h1 className="text-3xl sm:text-4xl font-extrabold text-[#111110] tracking-tight">
             College Assessment & Placement Portal
           </h1>
-          <p className="text-sm text-[#6E6D68] max-w-3xl leading-relaxed">
-            Centralized hub for college faculty and placement officers. Configure custom drive rules, upload specialized question banks, monitor real-time candidate scores, and manage proctoring security flags.
+          <p className="text-sm text-[#4B5563] font-medium mt-2 max-w-2xl leading-relaxed">
+            Centralized orchestration hub for campus recruitment drives, custom departmental question banks, and candidate proctoring evaluation records.
           </p>
         </div>
 
-        {/* Quick Navigation Cards Grid (Connecting All Pages) */}
+        {/* Feature Cards Grid */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          
-          {/* Feature 1: Drive Settings */}
-          <Link to="/faculty/dashboard" className="group">
-            <Card className="bg-white border border-[#E2DFD8] rounded-2xl p-6 shadow-sm group-hover:border-[#1D5DFF] group-hover:shadow-md transition-all h-full flex flex-col justify-between space-y-4">
+          {PORTAL_ITEMS.map((item) => (
+            <Link
+              key={item.to}
+              to={item.to}
+              className="bg-white border border-[#E0DFD9] hover:border-[#111110] rounded-2xl p-6 shadow-sm hover:shadow-md transition-all duration-200 flex flex-col justify-between space-y-6 card-hover group"
+            >
               <div className="space-y-3">
-                <div className="w-12 h-12 rounded-xl bg-blue-50 text-[#1D5DFF] flex items-center justify-center text-2xl font-bold">
-                  ⚡
-                </div>
-                <h2 className="text-lg font-bold text-[#161615] group-hover:text-[#1D5DFF] transition-colors">
-                  Placement Drive & Settings
+                <span className="font-mono text-[10px] font-bold uppercase px-2.5 py-1 rounded bg-[#FAF9F5] text-[#111110] border border-[#E0DFD9] inline-block">
+                  {item.tag}
+                </span>
+                <h2 className="text-lg font-bold text-[#111110] group-hover:text-[#1D5DFF] transition-colors leading-snug">
+                  {item.label}
                 </h2>
-                <p className="text-xs text-[#6E6D68] leading-relaxed">
-                  Configure custom placement test codes (e.g. <code>TCS-2026</code>), set question counts, toggle writing tests, and select question sources.
+                <p className="text-xs text-[#4B5563] font-medium leading-relaxed">
+                  {item.desc}
                 </p>
               </div>
 
-              <div className="text-xs font-bold text-[#1D5DFF] flex items-center gap-1 group-hover:translate-x-1 transition-transform">
-                Configure Drives →
+              <div className="text-xs font-bold text-[#1D5DFF] group-hover:translate-x-1 transition-transform pt-2 border-t border-[#E0DFD9]">
+                {item.action}
               </div>
-            </Card>
-          </Link>
-
-          {/* Feature 2: Question Bank Manager */}
-          <Link to="/admin/questions" className="group">
-            <Card className="bg-white border border-[#E2DFD8] rounded-2xl p-6 shadow-sm group-hover:border-[#1D5DFF] group-hover:shadow-md transition-all h-full flex flex-col justify-between space-y-4">
-              <div className="space-y-3">
-                <div className="w-12 h-12 rounded-xl bg-purple-50 text-purple-600 flex items-center justify-center text-2xl font-bold">
-                  📝
-                </div>
-                <h2 className="text-lg font-bold text-[#161615] group-hover:text-[#1D5DFF] transition-colors">
-                  Question Bank & Bulk Upload
-                </h2>
-                <p className="text-xs text-[#6E6D68] leading-relaxed">
-                  Add single questions with concept keywords, or drag & drop bulk <code>.csv</code> / <code>.json</code> question files into MongoDB.
-                </p>
-              </div>
-
-              <div className="text-xs font-bold text-[#1D5DFF] flex items-center gap-1 group-hover:translate-x-1 transition-transform">
-                Manage Question Bank →
-              </div>
-            </Card>
-          </Link>
-
-          {/* Feature 3: Roster & Student Reports */}
-          <Link to="/faculty/reports" className="group">
-            <Card className="bg-white border border-[#E2DFD8] rounded-2xl p-6 shadow-sm group-hover:border-[#1D5DFF] group-hover:shadow-md transition-all h-full flex flex-col justify-between space-y-4">
-              <div className="space-y-3">
-                <div className="w-12 h-12 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center text-2xl font-bold">
-                  📊
-                </div>
-                <h2 className="text-lg font-bold text-[#161615] group-hover:text-[#1D5DFF] transition-colors">
-                  Student Roster & Reports
-                </h2>
-                <p className="text-xs text-[#6E6D68] leading-relaxed">
-                  View student candidates by Name, Roll Number, and Department. Monitor proctoring security flags and export placement CSV rosters.
-                </p>
-              </div>
-
-              <div className="text-xs font-bold text-[#1D5DFF] flex items-center gap-1 group-hover:translate-x-1 transition-transform">
-                View Roster & Reports →
-              </div>
-            </Card>
-          </Link>
-
+            </Link>
+          ))}
         </div>
 
-        {/* Comprehensive Faculty User Manual & Operational Documentation */}
-        <div className="bg-white border border-[#E2DFD8] rounded-3xl p-8 shadow-sm space-y-8">
-          <div className="border-b border-[#E2DFD8] pb-4">
-            <span className="text-xs font-bold text-[#1D5DFF] uppercase tracking-wider">Official Operational Guide</span>
-            <h2 className="text-2xl font-extrabold text-[#161615] tracking-tight mt-1">
-              Faculty Feature Manual & Workflow Documentation
-            </h2>
-            <p className="text-xs text-[#6E6D68] mt-1">
-              Step-by-step instructions for managing college drives, uploading custom questions, and evaluating student performance.
-            </p>
+        {/* Access Note */}
+        <div className="p-5 bg-white border border-[#E0DFD9] rounded-xl flex items-center justify-between gap-4">
+          <div className="text-xs text-[#4B5563] font-medium">
+            Placement drives synchronize directly with candidate session parameters. Questions uploaded here take precedence during student interviews.
           </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-            
-            {/* Guide Section 1 */}
-            <div className="space-y-3">
-              <div className="flex items-center gap-2 font-bold text-sm text-[#161615]">
-                <span className="w-6 h-6 rounded-full bg-[#161615] text-white flex items-center justify-center text-xs">1</span>
-                <span>Placement Drives & Access Codes</span>
-              </div>
-              <p className="text-xs text-[#6E6D68] leading-relaxed">
-                Create custom placement drive codes (e.g. <code>TCS-MOCK-2026</code>). You can specify whether students take a technical writing test after verbal questions, set question counts (3, 5, 10), and toggle between system default questions or custom faculty questions.
-              </p>
-              <div className="bg-[#FAF9F5] p-3 rounded-xl border border-[#E2DFD8] text-[11px] text-[#6E6D68]">
-                💡 <strong>Tip:</strong> Share the generated link <code>http://localhost:5173/drive/CODE</code> directly with your class.
-              </div>
-            </div>
-
-            {/* Guide Section 2 */}
-            <div className="space-y-3">
-              <div className="flex items-center gap-2 font-bold text-sm text-[#161615]">
-                <span className="w-6 h-6 rounded-full bg-[#161615] text-white flex items-center justify-center text-xs">2</span>
-                <span>Question Bank & Keyword Matching</span>
-              </div>
-              <p className="text-xs text-[#6E6D68] leading-relaxed">
-                Add single questions or upload bulk <code>.csv</code> / <code>.json</code> files containing explicit concept keywords (e.g., <code>["mutual exclusion", "circular wait"]</code>). The AI evaluator uses these keywords to score factual candidate accuracy automatically.
-              </p>
-              <div className="bg-[#FAF9F5] p-3 rounded-xl border border-[#E2DFD8] text-[11px] text-[#6E6D68]">
-                💡 <strong>CSV Template:</strong> <code>questionText,keywords,referenceAnswer,tags</code>
-              </div>
-            </div>
-
-            {/* Guide Section 3 */}
-            <div className="space-y-3">
-              <div className="flex items-center gap-2 font-bold text-sm text-[#161615]">
-                <span className="w-6 h-6 rounded-full bg-[#161615] text-white flex items-center justify-center text-xs">3</span>
-                <span>Student Roster & Proctoring Flags</span>
-              </div>
-              <p className="text-xs text-[#6E6D68] leading-relaxed">
-                In the Roster section, students are listed by **Full Name**, **Roll Number**, and **Department**. Look for 🚨 <strong>Mismatch Flags</strong> if DeepFace detected potential face substitution or multiple people during recording.
-              </p>
-              <div className="bg-[#FAF9F5] p-3 rounded-xl border border-[#E2DFD8] text-[11px] text-[#6E6D68]">
-                💡 <strong>Export:</strong> Click "Export Roster (CSV)" to download placement records.
-              </div>
-            </div>
-
-          </div>
+          <span className="font-mono text-[10px] font-bold text-[#1D5DFF] bg-blue-50 border border-blue-200 px-2.5 py-1 rounded shrink-0">
+            SYSTEM ACTIVE
+          </span>
         </div>
 
       </div>

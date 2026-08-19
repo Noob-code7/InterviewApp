@@ -66,7 +66,8 @@ async def analyze_face(
         raise HTTPException(status_code=400, detail="File must be a video")
 
     # Save video
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as temp_video:
+    video_ext = os.path.splitext(video.filename or "")[1] or ".webm"
+    with tempfile.NamedTemporaryFile(delete=False, suffix=video_ext) as temp_video:
         content = await video.read()
         temp_video.write(content)
         temp_video_path = temp_video.name
@@ -92,7 +93,8 @@ async def analyze_face(
         if fps <= 0:
             fps = 30
             
-        frame_interval = max(1, int(fps)) # Sample 1 frame per second
+        sampling_interval_sec = float(os.getenv("FACE_SAMPLING_INTERVAL_SEC", "2.0"))
+        frame_interval = max(1, int(fps * sampling_interval_sec))  # Sample 0.5 FPS (1 frame every 2 seconds)
         
         total_frames_analyzed = 0
         faces_detected_count = 0

@@ -3,8 +3,8 @@ import { storageApi } from './storage.js'
 
 export const interviewApi = {
   generateQuestions: (sessionId) => api.post(`/api/sessions/${sessionId}/questions`),
-  
-  uploadAnswer: async (sessionId, questionId, videoBlob) => {
+
+  uploadAnswer: async (sessionId, questionId, videoBlob, options = {}) => {
     try {
       // 1. Upload media directly via storageApi (Cloudflare R2 or local fallback)
       const { key, fileUrl } = await storageApi.uploadDirectToR2({
@@ -19,16 +19,20 @@ export const interviewApi = {
       return api.post(`/api/sessions/${sessionId}/answers/${questionId}`, {
         videoUrl: fileUrl || key,
         storageKey: key,
+        ...options,
       })
     } catch (err) {
       console.warn('[InterviewApi] Direct R2 upload fallback to multipart form data:', err.message)
       const formData = new FormData()
       formData.append('video', videoBlob, 'answer.webm')
-      return api.post(`/api/sessions/${sessionId}/answers/${questionId}`, formData, {
-        headers: {
-          'Content-Type': 'multipart/form-data',
-        },
-      })
+      if (options.isFollowUp) {
+        formData.append('isFollowUp', 'true')
+        if (options.turn != null) formData.append('turn', String(options.turn))
+      }
+      if (options.questionIndex != null) formData.append('questionIndex', String(options.questionIndex))
+      if (options.questionText) formData.append('questionText', options.questionText)
+
+      return api.post(`/api/sessions/${sessionId}/answers/${questionId}`, formData)
     }
   },
 

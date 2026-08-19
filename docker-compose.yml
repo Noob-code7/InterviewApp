@@ -89,28 +89,6 @@ services:
       - ./ai-services/nlp-service/.env
     restart: unless-stopped
 
-  question-service:
-    build:
-      context: ./ai-services/question-service
-      dockerfile: Dockerfile
-    container_name: interview_questions
-    ports:
-      - "8004:8004"
-    env_file:
-      - ./ai-services/question-service/.env
-    restart: unless-stopped
-
-  report-service:
-    build:
-      context: ./ai-services/report-service
-      dockerfile: Dockerfile
-    container_name: interview_report
-    ports:
-      - "8005:8005"
-    env_file:
-      - ./ai-services/report-service/.env
-    restart: unless-stopped
-
   # ─── Frontend ──────────────────────────────────────────────────────────────
   frontend:
     build:

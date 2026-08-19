@@ -1,7 +1,6 @@
 import { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
 import api from "../api/axios.js";
-import { Card } from "../components/ui/index.js";
 
 export default function FacultyReportsPage() {
   const [sessions, setSessions] = useState([]);
@@ -79,58 +78,62 @@ export default function FacultyReportsPage() {
   });
 
   return (
-    <div className="min-h-screen bg-[#F6F5F0] text-[#161615] p-6 lg:p-10 font-sans">
-      <div className="max-w-7xl mx-auto space-y-8">
-        
-        {/* Header Bar */}
-        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 border-b border-[#E2DFD8] pb-6">
+    <div className="min-h-screen bg-[#F6F5F0] text-[#111110] font-sans pt-10 pb-20 px-6">
+      <div className="max-w-5xl mx-auto space-y-8 animate-fade-in">
+
+        {/* Top Header */}
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 border-b border-[#E0DFD9] pb-6">
           <div>
-            <div className="flex items-center gap-2 mb-2">
-              <Link to="/faculty/dashboard" className="text-xs font-semibold text-[#1D5DFF] hover:underline">
-                ← Back to Placement Drives & Question Settings
-              </Link>
-            </div>
-            <span className="px-3 py-1 rounded-full text-xs font-semibold uppercase tracking-wider bg-blue-50 text-[#1D5DFF] border border-blue-100">
-              Faculty Command Center
+            <span className="font-mono text-xs font-bold uppercase text-[#1D5DFF] tracking-wider block mb-1">
+              FACULTY PLACEMENT COMMAND
             </span>
-            <h1 className="text-3xl font-extrabold text-[#161615] tracking-tight mt-2">
-              Student Assessment Roster & Analytics Reports
+            <h1 className="text-3xl font-extrabold text-[#111110] tracking-tight">
+              Student Assessment Roster & Reports
             </h1>
-            <p className="text-xs text-[#6E6D68] mt-1">
-              Primary student identification roster showing student name, roll number, department, evaluation scores, and visual proctoring alerts.
+            <p className="text-xs text-[#4B5563] font-medium mt-1">
+              Candidate verification roster with evaluation scores, multi-modal metrics, and biometric proctoring alerts.
             </p>
           </div>
 
           <div className="flex items-center gap-3">
             <button
               onClick={exportCSV}
-              className="px-4 py-2.5 bg-white border border-[#E2DFD8] text-[#161615] hover:bg-[#FAF9F5] rounded-xl text-xs font-semibold transition-colors flex items-center gap-2 shadow-sm"
+              className="px-5 py-2.5 bg-white border border-[#E0DFD9] hover:border-[#111110] text-[#111110] rounded-lg text-xs font-bold transition-all shadow-sm flex items-center gap-2"
             >
-              <span>📊</span> Export Roster (CSV)
+              Export CSV Roster ↓
             </button>
+            <Link
+              to="/faculty/dashboard"
+              className="px-5 py-2.5 bg-[#111110] hover:bg-[#1D5DFF] text-white rounded-lg text-xs font-bold transition-all shadow-sm"
+            >
+              Configure Drives →
+            </Link>
           </div>
         </div>
 
-        {/* Candidate Student Roster Table */}
-        <Card className="bg-white border border-[#E2DFD8] rounded-2xl p-6 shadow-sm space-y-4">
-          <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+        {/* Roster Table Card */}
+        <div className="bg-white border border-[#E0DFD9] rounded-2xl p-6 sm:p-8 space-y-6 shadow-sm">
+          
+          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 border-b border-[#E0DFD9] pb-4">
             <div>
-              <h2 className="text-lg font-bold text-[#161615]">Student Roster ({filteredSessions.length} Candidates)</h2>
-              <p className="text-xs text-[#6E6D68]">Identified by Student Name, Roll Number, and Department.</p>
+              <h2 className="text-lg font-extrabold text-[#111110]">
+                Candidate Roster ({filteredSessions.length} Students)
+              </h2>
+              <p className="text-xs text-[#4B5563] font-medium">Click on any completed student record to inspect the comprehensive report.</p>
             </div>
 
-            <div className="flex items-center gap-3 w-full md:w-auto">
+            <div className="flex items-center gap-3 w-full sm:w-auto">
               <input
                 type="text"
-                placeholder="Search student name, roll no, role..."
+                placeholder="Search candidate name, roll no..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="px-3 py-1.5 rounded-xl border border-[#E2DFD8] bg-[#FAF9F5] text-xs focus:outline-none w-full md:w-64"
+                className="px-4 py-2 rounded-lg border border-[#E0DFD9] bg-[#FAF9F5] text-xs font-semibold text-[#111110] focus:outline-none w-full sm:w-64"
               />
               <select
                 value={filterDept}
                 onChange={(e) => setFilterDept(e.target.value)}
-                className="px-3 py-1.5 rounded-xl border border-[#E2DFD8] bg-[#FAF9F5] text-xs focus:outline-none"
+                className="px-3 py-2 rounded-lg border border-[#E0DFD9] bg-[#FAF9F5] text-xs font-semibold text-[#111110] focus:outline-none"
               >
                 <option value="all">All Departments</option>
                 <option value="Computer Science">Computer Science</option>
@@ -141,69 +144,53 @@ export default function FacultyReportsPage() {
           </div>
 
           {loading ? (
-            <div className="py-12 text-center text-xs text-[#6E6D68]">Loading student roster...</div>
+            <div className="py-12 text-center text-xs font-bold text-[#6B7280]">Loading student candidate roster...</div>
           ) : filteredSessions.length === 0 ? (
-            <div className="py-12 text-center text-xs text-[#6E6D68]">No student interview sessions found.</div>
+            <div className="py-12 text-center text-xs font-bold text-[#6B7280]">No student assessment records found.</div>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-left text-xs border-collapse">
                 <thead>
-                  <tr className="border-b border-[#E2DFD8] bg-[#FAF9F5] text-[#6E6D68] uppercase font-mono tracking-wider text-[10px]">
-                    <th className="py-3 px-4">Student Name (Primary)</th>
-                    <th className="py-3 px-4">Roll No / ID</th>
-                    <th className="py-3 px-4">Department & Year</th>
+                  <tr className="border-b border-[#E0DFD9] bg-[#FAF9F5] text-[#111110] font-mono text-[10px] uppercase font-bold">
+                    <th className="py-3 px-4">Candidate Student</th>
+                    <th className="py-3 px-4">Roll / ID</th>
+                    <th className="py-3 px-4">Department</th>
                     <th className="py-3 px-4">Target Role</th>
-                    <th className="py-3 px-4">Score %</th>
-                    <th className="py-3 px-4">Readiness</th>
-                    <th className="py-3 px-4">Proctoring Flag</th>
-                    <th className="py-3 px-4 text-right">Student Report</th>
+                    <th className="py-3 px-4 text-center">Score</th>
+                    <th className="py-3 px-4">Proctoring</th>
+                    <th className="py-3 px-4 text-right">Report</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-[#E2DFD8]">
+                <tbody className="divide-y divide-[#E0DFD9]">
                   {filteredSessions.map((s) => (
                     <tr key={s._id} className="hover:bg-[#FAF9F5] transition-colors">
-                      <td className="py-3.5 px-4 font-bold text-[#161615]">
+                      <td className="py-3.5 px-4 font-bold text-[#111110]">
                         {s.candidateName || s.userId?.name || "Student Candidate"}
-                        <div className="text-[10px] text-[#6E6D68] font-normal">{s.userId?.email || ""}</div>
                       </td>
-                      <td className="py-3.5 px-4 font-mono text-[#161615] font-semibold">
-                        {s.rollNo || "N/A"}
-                      </td>
-                      <td className="py-3.5 px-4 text-[#161615]">
-                        <div>{s.department || "General CSE"}</div>
-                        <div className="text-[10px] text-[#6E6D68]">Class of {s.graduationYear || "2026"}</div>
-                      </td>
-                      <td className="py-3.5 px-4 font-medium text-[#161615]">{s.role || "General"}</td>
-                      <td className="py-3.5 px-4 font-extrabold text-[#161615]">
-                        {s.overallScore ? `${s.overallScore}%` : "Pending"}
-                      </td>
-                      <td className="py-3.5 px-4">
-                        <span className={`px-2.5 py-1 rounded-full text-[10px] font-semibold border ${
-                          s.readinessLevel === 'market-ready' ? 'bg-emerald-50 text-emerald-600 border-emerald-200' :
-                          s.readinessLevel === 'high' ? 'bg-blue-50 text-blue-600 border-blue-200' :
-                          'bg-amber-50 text-amber-600 border-amber-200'
-                        }`}>
-                          {s.readinessLevel || "Processing"}
-                        </span>
+                      <td className="py-3.5 px-4 font-mono font-bold text-[#4B5563]">{s.rollNo || "N/A"}</td>
+                      <td className="py-3.5 px-4 font-medium text-[#4B5563]">{s.department || "General"}</td>
+                      <td className="py-3.5 px-4 font-semibold text-[#111110]">{s.role || "Technical"}</td>
+                      <td className="py-3.5 px-4 text-center font-mono font-black text-sm text-[#111110]">
+                        {s.overallScore != null ? `${s.overallScore}%` : "--"}
                       </td>
                       <td className="py-3.5 px-4">
                         {s.faceSubstitutionAlert ? (
-                          <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-red-50 text-red-600 border border-red-200 flex items-center gap-1 w-fit">
-                            🚨 Mismatch Flag
+                          <span className="font-mono text-[10px] font-bold text-red-700 bg-red-50 border border-red-200 px-2 py-0.5 rounded">
+                            FLAGGED
                           </span>
                         ) : (
-                          <span className="px-2.5 py-1 rounded-full text-[10px] font-medium bg-gray-50 text-gray-500 border border-gray-200 w-fit">
-                            ✓ Verified
+                          <span className="font-mono text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded">
+                            CLEAN
                           </span>
                         )}
                       </td>
                       <td className="py-3.5 px-4 text-right">
-                        <a
-                          href={`/report/${s._id}`}
-                          className="px-3 py-1.5 bg-[#1D5DFF] hover:bg-blue-600 text-white rounded-lg text-[11px] font-semibold transition-colors shadow-sm inline-block"
+                        <Link
+                          to={`/report/${s._id}`}
+                          className="font-bold text-[#1D5DFF] hover:underline"
                         >
                           View Report →
-                        </a>
+                        </Link>
                       </td>
                     </tr>
                   ))}
@@ -211,7 +198,8 @@ export default function FacultyReportsPage() {
               </table>
             </div>
           )}
-        </Card>
+
+        </div>
 
       </div>
     </div>

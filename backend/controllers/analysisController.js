@@ -26,7 +26,7 @@ export const transcribeAndEvaluate = [
   upload.single("audio"),
   async (req, res) => {
     try {
-      const { sessionId, questionId } = req.body;
+      const { sessionId, questionId, questionIndex: bodyQuestionIndex } = req.body;
       if (!req.file) return sendError(res, "No audio file uploaded", 400);
 
       const audioPath = req.file.filename;
@@ -42,24 +42,64 @@ export const transcribeAndEvaluate = [
         );
       } catch (err) {
         console.error("Voice service error:", err.message);
-        voiceData = {
-          transcript: req.body.clientTranscript || "",
-          confidenceScore: 0,
-        };
       }
+
+      const clientTranscript = (req.body.clientTranscript || "").trim();
+      const finalTranscript = (voiceData.transcript && voiceData.transcript.trim()) || clientTranscript || "";
+      voiceData = {
+        ...voiceData,
+        transcript: finalTranscript,
+        confidenceScore: voiceData.confidenceScore !== undefined && voiceData.confidenceScore !== null
+          ? voiceData.confidenceScore
+          : (finalTranscript ? 85 : 0),
+      };
 
       const keywords = req.body.keywords ? JSON.parse(req.body.keywords) : null;
       let questionText = "Interview Question";
       let questionType = "mixed";
 
       let session = null;
+      let targetIndex = -1;
+      let isFollowUp = false;
+      let followUpTurn = 1;
+
       if (sessionId) {
         session = await Session.findById(sessionId);
-        if (session) {
+        if (session && Array.isArray(session.answers)) {
           questionType = session.interviewType || "mixed";
-          if (questionId) {
-            const matchedQ = session.answers.find((a) => a.questionId === questionId);
-            if (matchedQ) questionText = matchedQ.questionText;
+          let targetParentId = String(questionId || "");
+
+          if (targetParentId.includes("-followup-")) {
+            isFollowUp = true;
+            const parts = targetParentId.split("-followup-");
+            targetParentId = parts[0];
+            if (parts[1]) followUpTurn = parseInt(parts[1], 10) || 1;
+          }
+
+          // Slot Match Strategy 1: questionId or subdoc _id
+          targetIndex = session.answers.findIndex(
+            (a) => String(a.questionId) === targetParentId || String(a._id) === targetParentId
+          );
+
+          // Slot Match Strategy 2: explicit questionIndex
+          if (targetIndex === -1 && bodyQuestionIndex !== undefined && bodyQuestionIndex !== null) {
+            const qIdx = parseInt(bodyQuestionIndex, 10);
+            if (!isNaN(qIdx) && qIdx >= 0 && qIdx < session.answers.length) {
+              targetIndex = qIdx;
+            }
+          }
+
+          // Slot Match Strategy 3: trailing index
+          if (targetIndex === -1 && targetParentId.includes("-")) {
+            const trailing = targetParentId.split("-").pop();
+            const trailingIdx = parseInt(trailing, 10);
+            if (!isNaN(trailingIdx) && trailingIdx >= 0 && trailingIdx < session.answers.length) {
+              targetIndex = trailingIdx;
+            }
+          }
+
+          if (targetIndex !== -1) {
+            questionText = session.answers[targetIndex].questionText || questionText;
           }
         }
       }
@@ -69,27 +109,36 @@ export const transcribeAndEvaluate = [
       try {
         const nlpRes = await axios.post(`${NLP_SERVICE_URL}/analyze`, {
           question: questionText,
-          transcript: voiceData.transcript || "",
+          transcript: finalTranscript,
           questionType,
           keywords,
         });
         evaluation = nlpRes.data.data || {};
       } catch (nlpErr) {
         console.error("NLP service error:", nlpErr.message);
-        evaluation = evaluateTranscriptFallback(voiceData.transcript || "", keywords);
+        evaluation = evaluateTranscriptFallback(finalTranscript, keywords);
       }
 
-      // 3. Persist on session answer if sessionId + questionId provided
-      if (session && questionId) {
-        const idx = session.answers.findIndex((a) => a.questionId === questionId);
-        if (idx !== -1) {
-          session.answers[idx].voiceAnalysis = {
+      // 3. Persist on session answer slot
+      if (session && targetIndex !== -1) {
+        const parent = session.answers[targetIndex];
+        if (isFollowUp && Array.isArray(parent.followUps) && parent.followUps.length > 0) {
+          const fIdx = Math.min(followUpTurn - 1, parent.followUps.length - 1);
+          parent.followUps[fIdx].voiceAnalysis = {
             ...voiceData,
-            transcript: voiceData.transcript || "",
+            transcript: finalTranscript,
           };
-          session.answers[idx].nlpAnalysis = evaluation;
-          await session.save();
+          parent.followUps[fIdx].transcript = finalTranscript;
+          parent.followUps[fIdx].nlpAnalysis = evaluation;
+        } else {
+          parent.voiceAnalysis = {
+            ...voiceData,
+            transcript: finalTranscript,
+          };
+          parent.transcript = finalTranscript;
+          parent.nlpAnalysis = evaluation;
         }
+        await session.save();
       }
 
       try {

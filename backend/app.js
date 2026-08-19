@@ -35,10 +35,16 @@ app.use(
   }),
 );
 
-// Global rate limiter — generous limits in development mode
+// Global rate limiter — generous limits in development mode.
+// Deployment-specific budgets are configurable via RATE_LIMIT_MAX /
+// RATE_LIMIT_WINDOW_MS; when unset the defaults match the original behavior
+// (development 2000 / production 300 per 15 minutes).
 const globalLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 min
-  max: isDev ? 2000 : 300,
+  windowMs: Number(process.env.RATE_LIMIT_WINDOW_MS) || 15 * 60 * 1000,
+  max: (() => {
+    const configured = Number(process.env.RATE_LIMIT_MAX);
+    return configured > 0 ? configured : isDev ? 2000 : 300;
+  })(),
   standardHeaders: true,
   legacyHeaders: false,
   message: {
@@ -94,6 +100,33 @@ app.use("/api/admin", adminRoutes);
 // Phase 6:  app.use('/api/writing', writingRoutes)
 // Phase 7:  app.use('/api/reports', reportRoutes)
 // Phase 8:  app.use('/api/progress', progressRoutes)
+
+// ── Optional frontend hosting (college LAN self-hosting) ──────────────────────
+// When SERVE_FRONTEND=true the backend serves the built React app from
+// frontend/dist with an SPA fallback. API (/api) and upload (/uploads) routes
+// take precedence, so unknown API paths still return JSON 404s. Cloud
+// deployments keep this off and host the frontend separately (nginx/Docker).
+if (process.env.SERVE_FRONTEND === "true") {
+  const frontendDist = path.resolve(
+    process.env.FRONTEND_DIST_DIR || path.join(__dirname, "../frontend/dist"),
+  );
+  const indexHtml = path.join(frontendDist, "index.html");
+  const fs = (await import("fs")).default;
+
+  if (fs.existsSync(indexHtml)) {
+    app.use(express.static(frontendDist));
+    app.use((req, res, next) => {
+      if (req.method !== "GET") return next();
+      if (req.path.startsWith("/api") || req.path.startsWith("/uploads")) return next();
+      res.sendFile(indexHtml, (err) => {
+        if (err) next(err);
+      });
+    });
+    console.log(`[Frontend] Serving SPA from ${frontendDist}`);
+  } else {
+    console.warn(`[Frontend] SERVE_FRONTEND=true but no build found at ${frontendDist}. Run 'npm run build' in frontend/ first.`);
+  }
+}
 
 // ── 404 handler ───────────────────────────────────────────────────────────────
 app.use((_req, res) => {

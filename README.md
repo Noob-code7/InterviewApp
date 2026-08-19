@@ -35,11 +35,9 @@ A real-time AI-powered interview simulator with facial analysis, voice analysis,
 │   └── utils/               # Shared helpers
 │
 ├── ai-services/
-│   ├── face-service/        # Facial analysis — DeepFace/MediaPipe (port 8001)
-│   ├── voice-service/       # Voice/transcript — Whisper + Librosa (port 8002)
-│   ├── nlp-service/         # NLP answer scoring — GPT-4o/Claude (port 8003)
-│   ├── question-service/    # Question + TTS generation (port 8004)
-│   └── report-service/      # Report generation — GPT-4o/Claude (port 8005)
+│   ├── face-service/        # Facial analysis — DeepFace (port 8001)
+│   ├── voice-service/       # Voice/transcript — Whisper + Librosa + Wav2Vec2 SER (port 8002)
+│   └── nlp-service/         # NLP answer scoring — OpenRouter LLM + local heuristics + resume parser (port 8003)
 │
 └── docker-compose.yml
 ```
@@ -69,13 +67,13 @@ npm run dev
 
 ### 4. AI Services (each in a separate terminal, Python 3.11+)
 ```bash
-cd ai-services/question-service
+cd ai-services/nlp-service
 pip install -r requirements.txt
-cp .env.example .env    # fill in OPENAI_API_KEY
+cp .env.example .env    # fill in OPENROUTER_API_KEY
 python main.py
 ```
 
-Repeat for any other AI services you need running locally.
+Repeat for face-service and voice-service as needed (voice-service needs the SER model `.pth`; see `SER_MODEL_URL` in `.env.example`).
 
 ## Environment Variables
 
@@ -89,8 +87,6 @@ See `.env.example` at root and each service's `.env.example` for required variab
 | Face Service | 8001 |
 | Voice Service | 8002 |
 | NLP Service | 8003 |
-| Question Service | 8004 |
-| Report Service | 8005 |
 | Frontend (dev) | 5173 |
 
 ## Build Phases

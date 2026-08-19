@@ -1,71 +1,46 @@
-import { useEffect, useState } from "react";
-import { useParams, useNavigate, Link } from "react-router-dom";
-import { interviewApi } from "../api/interview.js";
+import { useState, useEffect } from "react";
+import { useParams, Link } from "react-router-dom";
+import { reportsApi } from "../api/reports.js";
 
 export default function ReportPage() {
   const { sessionId } = useParams();
-  const navigate = useNavigate();
-
   const [report, setReport] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
-  const [expandedQuestion, setExpandedQuestion] = useState(null);
+  const [error, setError] = useState("");
+  const [expandedQuestion, setExpandedQuestion] = useState(0);
 
   useEffect(() => {
     const fetchReport = async () => {
       try {
-        setLoading(true);
-        const { data } = await interviewApi.getReport(sessionId);
-        const rawReport = data.data?.report || data.data || {};
-        
-        const detailed = rawReport.detailedScores || {};
-        const mappedDimensionScores = rawReport.dimensionScores || {
-          faceScore: detailed.faceVisualScore ?? rawReport.breakdown?.confidence ?? 0,
-          voiceScore: detailed.voiceSerScore ?? rawReport.breakdown?.communication ?? 0,
-          nlpScore: detailed.nlpVerbalScore ?? rawReport.breakdown?.technicalAccuracy ?? 0,
-          writingScore: detailed.writingTestScore ?? 0,
-        };
-
-        setReport({
-          ...rawReport,
-          dimensionScores: mappedDimensionScores,
-        });
+        const { data } = await reportsApi.get(sessionId);
+        setReport(data.data.report || data.data);
       } catch (err) {
-        console.error("Failed to load report:", err);
-        setError(err.response?.data?.message || "Failed to load candidate performance report.");
+        setError(err.response?.data?.error || "Failed to load candidate interview report");
       } finally {
         setLoading(false);
       }
     };
-
-    if (sessionId) {
-      fetchReport();
-    }
+    fetchReport();
   }, [sessionId]);
 
   const handlePrint = () => {
     window.print();
   };
 
-  const getReadinessBadge = (level) => {
-    switch (level) {
-      case "market-ready":
-        return { label: "Market Ready", color: "bg-emerald-500/10 text-emerald-600 border-emerald-500/20" };
-      case "high":
-        return { label: "High Readiness", color: "bg-blue-500/10 text-blue-600 border-blue-500/20" };
-      case "medium":
-        return { label: "Moderate Readiness", color: "bg-amber-500/10 text-amber-600 border-amber-500/20" };
-      default:
-        return { label: "Needs Development", color: "bg-red-500/10 text-red-600 border-red-500/20" };
-    }
-  };
-
   if (loading) {
     return (
-      <div className="min-h-[calc(100vh-4rem)] flex items-center justify-center bg-[#F6F5F0]">
-        <div className="flex flex-col items-center gap-3">
-          <div className="w-10 h-10 border-4 border-[#1D5DFF] border-t-transparent rounded-full animate-spin"></div>
-          <p className="text-sm font-medium text-[#111110]/70">Generating candidate analytics report...</p>
+      <div className="min-h-screen bg-[#F6F5F0] flex items-center justify-center font-sans">
+        <div className="text-center space-y-4 animate-fade-in">
+          <div className="relative w-12 h-12 mx-auto">
+            <div className="absolute inset-0 rounded-full border-2 border-[#E0DFD9]" />
+            <div className="absolute inset-0 rounded-full border-2 border-transparent border-t-[#1D5DFF] animate-spin" />
+          </div>
+          <div className="space-y-1">
+            <p className="font-mono text-xs text-[#111110] font-semibold uppercase tracking-widest">
+              Aggregating Multimodal Analytics
+            </p>
+            <p className="text-xs text-[#6E6D68]">Synthesizing verbal NLP, voice acoustic SER, and facial telemetry...</p>
+          </div>
         </div>
       </div>
     );
@@ -73,182 +48,334 @@ export default function ReportPage() {
 
   if (error || !report) {
     return (
-      <div className="min-h-[calc(100vh-4rem)] flex items-center justify-center p-6 bg-[#F6F5F0]">
-        <div className="bg-white border border-[#E0DFD9] rounded-2xl p-8 max-w-md w-full text-center shadow-sm">
-          <div className="w-12 h-12 rounded-full bg-red-50 text-red-500 flex items-center justify-center mx-auto mb-4 text-xl">⚠️</div>
-          <h2 className="text-xl font-bold text-[#111110] mb-2">Report Unavailable</h2>
-          <p className="text-sm text-[#111110]/60 mb-6">{error || "Could not find the requested interview report."}</p>
-          <Link to="/" className="px-6 py-2.5 bg-[#1D5DFF] text-white rounded-xl text-sm font-medium hover:bg-blue-600 transition-colors inline-block">
-            Return to Home
+      <div className="min-h-screen bg-[#F6F5F0] flex items-center justify-center p-6 font-sans">
+        <div className="bg-white border border-[#E0DFD9] rounded-2xl max-w-md w-full text-center p-8 space-y-6 shadow-sm">
+          <div className="w-12 h-12 rounded-full bg-red-50 text-red-600 flex items-center justify-center mx-auto text-xl font-mono">
+            !
+          </div>
+          <div className="space-y-2">
+            <h2 className="text-xl font-bold text-[#111110]">Report Unavailable</h2>
+            <p className="text-xs text-[#6E6D68] leading-relaxed">
+              {error || "Could not retrieve candidate performance record for this session."}
+            </p>
+          </div>
+          <Link
+            to="/"
+            className="inline-block w-full py-3 bg-[#111110] hover:bg-[#1D5DFF] text-white rounded-xl text-xs font-semibold transition-colors duration-200"
+          >
+            Return to Dashboard
           </Link>
         </div>
       </div>
     );
   }
 
-  const badge = getReadinessBadge(report.readinessLevel);
-  const { faceScore, voiceScore, nlpScore, writingScore } = report.dimensionScores;
+  const faceScore = report.detailedScores?.faceVisualScore ?? report.breakdown?.confidence ?? report.dimensionScores?.faceScore ?? 0;
+  const voiceScore = report.detailedScores?.voiceSerScore ?? report.breakdown?.communication ?? report.dimensionScores?.voiceScore ?? 0;
+  const nlpScore = report.detailedScores?.nlpVerbalScore ?? report.breakdown?.technicalAccuracy ?? report.dimensionScores?.nlpScore ?? 0;
+  const writingScore = report.detailedScores?.writingTestScore ?? report.dimensionScores?.writingScore ?? 0;
+
+  const trackBreakdown = report.trackBreakdown || {};
+
+  const getReadinessBadge = (level) => {
+    switch (level) {
+      case "market-ready":
+        return { label: "Market Ready", bg: "bg-emerald-50 text-emerald-700 border-emerald-200" };
+      case "high":
+        return { label: "High Readiness", bg: "bg-blue-50 text-blue-700 border-blue-200" };
+      case "medium":
+        return { label: "Moderate Readiness", bg: "bg-amber-50 text-amber-700 border-amber-200" };
+      default:
+        return { label: "Foundation Building", bg: "bg-gray-100 text-gray-700 border-gray-200" };
+    }
+  };
+
+  const readiness = getReadinessBadge(report.readinessLevel);
 
   return (
-    <div className="min-h-[calc(100vh-4rem)] bg-[#F6F5F0] py-10 px-4 sm:px-6 lg:px-8">
-      <div className="max-w-5xl mx-auto space-y-8">
-        
-        {/* Top Header Bar */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white border border-[#E0DFD9] rounded-2xl p-6 shadow-sm">
-          <div>
-            <div className="flex items-center gap-3 mb-1">
-              <span className="px-3 py-1 rounded-full text-xs font-semibold uppercase tracking-wider bg-[#111110] text-white">
-                {report.interviewType} Interview
-              </span>
-              <span className={`px-3 py-1 rounded-full text-xs font-semibold border ${badge.color}`}>
-                {badge.label}
-              </span>
-            </div>
-            <h1 className="text-2xl font-extrabold text-[#111110] tracking-tight">{report.role} Candidate Assessment</h1>
-            <p className="text-xs text-[#111110]/50 mt-1">
-              Session ID: {report.sessionId} • Completed on {new Date(report.createdAt).toLocaleDateString()}
-            </p>
+    <div className="min-h-screen bg-[#F6F5F0] text-[#111110] font-sans pb-20">
+      {/* Top Banner Navigation */}
+      <header className="border-b border-[#E0DFD9] bg-white/95 backdrop-blur-sm sticky top-0 z-30 shadow-sm transition-all">
+        <div className="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <Link to="/" className="font-mono text-sm font-black tracking-wider text-[#111110] hover:text-[#1D5DFF] transition-colors">
+              INTERVIEWAI
+            </Link>
+            <span className="text-[#E0DFD9]">|</span>
+            <span className="font-mono text-xs text-[#6E6D68] uppercase tracking-widest hidden sm:inline">
+              Candidate Performance Evaluation
+            </span>
           </div>
 
           <div className="flex items-center gap-3">
             <button
               onClick={handlePrint}
-              className="px-4 py-2.5 bg-[#F6F5F0] hover:bg-[#E0DFD9] text-[#111110] border border-[#E0DFD9] rounded-xl text-sm font-medium transition-colors flex items-center gap-2"
+              className="px-4 py-2 border border-[#E0DFD9] hover:border-[#111110] hover:bg-[#F6F5F0] text-[#111110] rounded-xl text-xs font-semibold transition-all duration-200 flex items-center gap-2"
             >
-              <span>📄</span> Print / Save PDF
+              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" />
+              </svg>
+              Export PDF
             </button>
             <Link
               to="/interview/setup"
-              className="px-5 py-2.5 bg-[#1D5DFF] hover:bg-blue-600 text-white rounded-xl text-sm font-medium transition-colors"
+              className="px-4 py-2 bg-[#111110] hover:bg-[#1D5DFF] text-white rounded-xl text-xs font-semibold transition-colors duration-200 shadow-sm"
             >
-              Retake Interview →
+              Start New Practice →
             </Link>
           </div>
         </div>
+      </header>
 
-        {/* Critical Alert Banner if Face Substitution Detected */}
+      {/* Main Container */}
+      <div className="max-w-6xl mx-auto px-6 pt-8 space-y-8 animate-fade-in">
+
+        {/* Security / Proctoring Flag Alert (if flagged) */}
         {report.faceSubstitutionAlert && (
-          <div className="bg-red-500/10 border border-red-500/30 rounded-2xl p-5 text-red-600 flex items-start gap-4">
-            <span className="text-2xl">🚨</span>
+          <div className="bg-red-50 border border-red-200 rounded-2xl p-5 text-red-800 flex items-start gap-4 shadow-sm">
+            <div className="w-8 h-8 rounded-full bg-red-100 flex items-center justify-center shrink-0 text-red-600 font-bold">
+              !
+            </div>
             <div>
-              <h3 className="font-bold text-sm">Security Alert: Face Substitution / Multiple Identity Detected</h3>
-              <p className="text-xs mt-1 opacity-90">
-                The visual AI verification engine flagged mismatching facial biometric signatures across frames during this session. Review individual answer recordings carefully.
+              <h3 className="font-bold text-sm text-red-900">Security Alert: Facial Identity Anomaly Flagged</h3>
+              <p className="text-xs text-red-700 mt-1 leading-relaxed">
+                The visual biometric verification engine detected potential face substitution or multiple candidates across evaluation frames. Individual answer telemetry should be audited.
               </p>
             </div>
           </div>
         )}
 
-        {/* Hero Score Gauge Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          {/* Main Overall Score Card */}
-          <div className="bg-[#111110] text-white rounded-2xl p-8 flex flex-col items-center justify-center text-center relative overflow-hidden shadow-md">
-            <div className="absolute top-0 right-0 w-32 h-32 bg-[#1D5DFF]/20 rounded-full blur-2xl"></div>
-            <span className="text-xs font-semibold uppercase tracking-widest text-white/60 mb-2">Overall Candidate Index</span>
-            <div className="text-6xl font-black text-white my-3 tracking-tight">
-              {report.overallScore}<span className="text-2xl font-bold text-[#1D5DFF]">%</span>
+        {/* Candidate Profile Bar */}
+        <div className="bg-white border border-[#E0DFD9] rounded-2xl p-6 shadow-sm hover:shadow-md transition-all duration-300 flex flex-col md:flex-row md:items-center justify-between gap-6">
+          <div className="space-y-2">
+            <div className="flex flex-wrap items-center gap-2.5">
+              <h1 className="text-2xl sm:text-3xl font-extrabold text-[#111110] tracking-tight">
+                {report.candidateName || "Candidate"}
+              </h1>
+              <span className="px-3 py-0.5 rounded-full text-xs font-bold font-mono uppercase bg-blue-50 text-[#1D5DFF] border border-blue-200">
+                {report.role}
+              </span>
+              <span className="px-3 py-0.5 rounded-full text-xs font-bold font-mono uppercase bg-gray-100 text-gray-700 border border-gray-200">
+                {report.interviewType} Interview
+              </span>
             </div>
-            <p className="text-xs text-white/70 max-w-xs mt-1">
-              Weighted composite evaluation across visual, audio, verbal, and technical writing indicators.
-            </p>
+            <div className="text-xs text-[#6E6D68] flex flex-wrap items-center gap-4 font-inter">
+              <span>Department: <strong className="text-[#111110] font-semibold">{report.department || "General Engineering"}</strong></span>
+              <span>Roll No: <strong className="text-[#111110] font-semibold">{report.rollNo || "N/A"}</strong></span>
+              <span>Session: <strong className="font-mono text-[#111110]">{String(sessionId).slice(-8)}</strong></span>
+              <span>Date: <strong className="text-[#111110] font-semibold">{new Date(report.createdAt || Date.now()).toLocaleDateString()}</strong></span>
+            </div>
           </div>
 
-          {/* Multimodal Dimension Scores Grid (2 cols) */}
-          <div className="md:col-span-2 grid grid-cols-2 gap-4">
-            {/* Face Score */}
-            <div className="bg-white border border-[#E0DFD9] rounded-2xl p-5 flex flex-col justify-between shadow-sm">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-semibold text-[#111110]/60 uppercase tracking-wider">Visual & Facial</span>
-                <span className="text-xl">🎥</span>
-              </div>
-              <div className="my-3">
-                <div className="text-3xl font-extrabold text-[#111110]">{faceScore}%</div>
-                <div className="w-full bg-[#F6F5F0] h-2 rounded-full mt-2 overflow-hidden">
-                  <div className="bg-[#1D5DFF] h-full rounded-full" style={{ width: `${faceScore}%` }}></div>
-                </div>
-              </div>
-              <span className="text-xs text-[#111110]/60">Eye contact, attention & composure</span>
-            </div>
-
-            {/* Voice Score */}
-            <div className="bg-white border border-[#E0DFD9] rounded-2xl p-5 flex flex-col justify-between shadow-sm">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-semibold text-[#111110]/60 uppercase tracking-wider">Voice & Speech</span>
-                <span className="text-xl">🎙️</span>
-              </div>
-              <div className="my-3">
-                <div className="text-3xl font-extrabold text-[#111110]">{voiceScore}%</div>
-                <div className="w-full bg-[#F6F5F0] h-2 rounded-full mt-2 overflow-hidden">
-                  <div className="bg-emerald-500 h-full rounded-full" style={{ width: `${voiceScore}%` }}></div>
-                </div>
-              </div>
-              <span className="text-xs text-[#111110]/60">Pacing, pitch & Speech Emotion model</span>
-            </div>
-
-            {/* Verbal NLP Score */}
-            <div className="bg-white border border-[#E0DFD9] rounded-2xl p-5 flex flex-col justify-between shadow-sm">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-semibold text-[#111110]/60 uppercase tracking-wider">Verbal Answer NLP</span>
-                <span className="text-xl">💬</span>
-              </div>
-              <div className="my-3">
-                <div className="text-3xl font-extrabold text-[#111110]">{nlpScore}%</div>
-                <div className="w-full bg-[#F6F5F0] h-2 rounded-full mt-2 overflow-hidden">
-                  <div className="bg-indigo-500 h-full rounded-full" style={{ width: `${nlpScore}%` }}></div>
-                </div>
-              </div>
-              <span className="text-xs text-[#111110]/60">Relevance & domain completeness</span>
-            </div>
-
-            {/* Writing Score */}
-            <div className="bg-white border border-[#E0DFD9] rounded-2xl p-5 flex flex-col justify-between shadow-sm">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-semibold text-[#111110]/60 uppercase tracking-wider">Written Test</span>
-                <span className="text-xl">✍️</span>
-              </div>
-              <div className="my-3">
-                <div className="text-3xl font-extrabold text-[#111110]">{writingScore}%</div>
-                <div className="w-full bg-[#F6F5F0] h-2 rounded-full mt-2 overflow-hidden">
-                  <div className="bg-purple-500 h-full rounded-full" style={{ width: `${writingScore}%` }}></div>
-                </div>
-              </div>
-              <span className="text-xs text-[#111110]/60">Syntax, clarity & technical writing</span>
+          {/* Readiness Level Badge */}
+          <div className="flex items-center gap-4 border-t md:border-t-0 md:border-l border-[#E0DFD9] pt-4 md:pt-0 md:pl-6 shrink-0">
+            <div className="text-left md:text-right">
+              <span className="text-[10px] uppercase font-mono font-bold text-[#6E6D68] tracking-widest block mb-1">
+                Readiness Index
+              </span>
+              <span className={`inline-block px-3.5 py-1 rounded-full text-xs font-extrabold font-mono border ${readiness.bg}`}>
+                {readiness.label}
+              </span>
             </div>
           </div>
         </div>
 
-        {/* Voice SER 8-Emotion Spectrum Card */}
-        {report.voiceEmotions && (
-          <div className="bg-white border border-[#E0DFD9] rounded-2xl p-6 shadow-sm space-y-4">
+        {/* Hero Score Gauge Grid */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          
+          {/* Main Overall Score Card */}
+          <div className="bg-[#111110] text-[#F0EEE8] border border-[#2A2A28] rounded-2xl p-8 flex flex-col items-center justify-center text-center relative overflow-hidden shadow-xl group hover:border-[#1D5DFF]/50 transition-all duration-300">
+            <div className="absolute top-0 right-0 w-44 h-44 bg-[#1D5DFF]/20 rounded-full blur-3xl pointer-events-none transition-opacity group-hover:opacity-100 opacity-60" />
+            <span className="text-[11px] font-mono font-semibold uppercase tracking-[0.2em] text-[#9A9990] mb-2">
+              Overall Candidate Score
+            </span>
+            <div className="text-6xl sm:text-7xl font-black text-white my-3 tracking-tight font-mono group-hover:scale-105 transition-transform duration-300">
+              {report.overallScore}<span className="text-3xl font-bold text-[#1D5DFF]">%</span>
+            </div>
+            <p className="text-xs text-[#9A9990] max-w-xs mt-2 leading-relaxed font-inter">
+              Weighted composite evaluating spoken technical NLP depth, Speech Emotion characteristics, visual composure, and written clarity.
+            </p>
+          </div>
+
+          {/* Multimodal Dimension Scores Grid */}
+          <div className="md:col-span-2 grid grid-cols-1 sm:grid-cols-2 gap-4">
+            
+            {/* Verbal NLP */}
+            <div className="bg-white border border-[#E0DFD9] rounded-2xl p-5 flex flex-col justify-between shadow-sm hover:shadow-md hover:border-[#1D5DFF]/40 hover:-translate-y-0.5 transition-all duration-200 group">
+              <div className="flex items-center justify-between">
+                <span className="font-mono text-[10px] font-bold text-[#6E6D68] uppercase tracking-wider">
+                  Verbal Answer NLP
+                </span>
+                <span className="w-2 h-2 rounded-full bg-indigo-500" />
+              </div>
+              <div className="my-3">
+                <div className="text-3xl font-extrabold text-[#111110] font-mono flex items-baseline gap-1">
+                  {nlpScore}<span className="text-sm font-semibold text-[#6E6D68]">%</span>
+                </div>
+                <div className="w-full bg-[#F6F5F0] h-2 rounded-full mt-2 overflow-hidden border border-[#E0DFD9]">
+                  <div
+                    className="bg-indigo-600 h-full rounded-full transition-all duration-700 ease-out"
+                    style={{ width: `${nlpScore}%` }}
+                  />
+                </div>
+              </div>
+              <span className="text-xs text-[#6E6D68] font-inter">Technical depth, concept mastery & completeness</span>
+            </div>
+
+            {/* Voice & Speech */}
+            <div className="bg-white border border-[#E0DFD9] rounded-2xl p-5 flex flex-col justify-between shadow-sm hover:shadow-md hover:border-[#1D5DFF]/40 hover:-translate-y-0.5 transition-all duration-200 group">
+              <div className="flex items-center justify-between">
+                <span className="font-mono text-[10px] font-bold text-[#6E6D68] uppercase tracking-wider">
+                  Voice Acoustic SER
+                </span>
+                <span className="w-2 h-2 rounded-full bg-emerald-500" />
+              </div>
+              <div className="my-3">
+                <div className="text-3xl font-extrabold text-[#111110] font-mono flex items-baseline gap-1">
+                  {voiceScore}<span className="text-sm font-semibold text-[#6E6D68]">%</span>
+                </div>
+                <div className="w-full bg-[#F6F5F0] h-2 rounded-full mt-2 overflow-hidden border border-[#E0DFD9]">
+                  <div
+                    className="bg-emerald-500 h-full rounded-full transition-all duration-700 ease-out"
+                    style={{ width: `${voiceScore}%` }}
+                  />
+                </div>
+              </div>
+              <span className="text-xs text-[#6E6D68] font-inter">Pacing, pitch stability & emotional fluency</span>
+            </div>
+
+            {/* Visual & Facial */}
+            <div className="bg-white border border-[#E0DFD9] rounded-2xl p-5 flex flex-col justify-between shadow-sm hover:shadow-md hover:border-[#1D5DFF]/40 hover:-translate-y-0.5 transition-all duration-200 group">
+              <div className="flex items-center justify-between">
+                <span className="font-mono text-[10px] font-bold text-[#6E6D68] uppercase tracking-wider">
+                  Visual Composure
+                </span>
+                <span className="w-2 h-2 rounded-full bg-[#1D5DFF]" />
+              </div>
+              <div className="my-3">
+                <div className="text-3xl font-extrabold text-[#111110] font-mono flex items-baseline gap-1">
+                  {faceScore}<span className="text-sm font-semibold text-[#6E6D68]">%</span>
+                </div>
+                <div className="w-full bg-[#F6F5F0] h-2 rounded-full mt-2 overflow-hidden border border-[#E0DFD9]">
+                  <div
+                    className="bg-[#1D5DFF] h-full rounded-full transition-all duration-700 ease-out"
+                    style={{ width: `${faceScore}%` }}
+                  />
+                </div>
+              </div>
+              <span className="text-xs text-[#6E6D68] font-inter">Eye engagement, camera attention & confidence</span>
+            </div>
+
+            {/* Technical Writing */}
+            <div className="bg-white border border-[#E0DFD9] rounded-2xl p-5 flex flex-col justify-between shadow-sm hover:shadow-md hover:border-[#1D5DFF]/40 hover:-translate-y-0.5 transition-all duration-200 group">
+              <div className="flex items-center justify-between">
+                <span className="font-mono text-[10px] font-bold text-[#6E6D68] uppercase tracking-wider">
+                  Technical Writing
+                </span>
+                <span className="w-2 h-2 rounded-full bg-purple-500" />
+              </div>
+              <div className="my-3">
+                <div className="text-3xl font-extrabold text-[#111110] font-mono flex items-baseline gap-1">
+                  {writingScore}<span className="text-sm font-semibold text-[#6E6D68]">%</span>
+                </div>
+                <div className="w-full bg-[#F6F5F0] h-2 rounded-full mt-2 overflow-hidden border border-[#E0DFD9]">
+                  <div
+                    className="bg-purple-600 h-full rounded-full transition-all duration-700 ease-out"
+                    style={{ width: `${writingScore}%` }}
+                  />
+                </div>
+              </div>
+              <span className="text-xs text-[#6E6D68] font-inter">Grammar, logical flow & technical explanation</span>
+            </div>
+
+          </div>
+        </div>
+
+        {/* Multi-Track Performance Breakdown */}
+        {(trackBreakdown.hrScore != null || trackBreakdown.subjectScore != null || trackBreakdown.projectScore != null) && (
+          <div className="bg-white border border-[#E0DFD9] rounded-2xl p-6 shadow-sm hover:shadow-md transition-all duration-300 space-y-4">
             <div className="flex items-center justify-between border-b border-[#E0DFD9] pb-3">
-              <h2 className="text-lg font-bold text-[#111110] flex items-center gap-2">
-                <span>🎤</span> Speech Emotion Recognition (8-Emotion Spectrum)
-              </h2>
-              <span className="px-3 py-1 bg-blue-50 text-blue-700 border border-blue-200 text-xs font-bold rounded-full capitalize">
-                Dominant: {report.voiceEmotions.dominant || "Neutral"}
+              <div className="flex items-center gap-2">
+                <span className="w-2 h-2 rounded-full bg-[#1D5DFF]" />
+                <h2 className="text-base font-bold text-[#111110]">Multi-Track Syllabus Breakdown</h2>
+              </div>
+              <span className="font-mono text-[10px] uppercase text-[#6E6D68] tracking-widest">
+                Domain Competencies
               </span>
             </div>
             
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 pt-1">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="p-4 bg-[#F6F5F0] rounded-xl border border-[#E0DFD9] hover:border-[#111110] transition-colors space-y-2">
+                <span className="font-mono text-[10px] font-bold text-[#6E6D68] uppercase tracking-wider block">
+                  HR & Behavioral Track
+                </span>
+                <div className="text-2xl font-black text-[#111110] font-mono">
+                  {trackBreakdown.hrScore != null ? `${trackBreakdown.hrScore}%` : "N/A"}
+                </div>
+                <p className="text-xs text-[#6E6D68]">STAR framing, ownership attitude, and teamwork scenarios.</p>
+              </div>
+
+              <div className="p-4 bg-[#F6F5F0] rounded-xl border border-[#E0DFD9] hover:border-[#111110] transition-colors space-y-2">
+                <span className="font-mono text-[10px] font-bold text-[#6E6D68] uppercase tracking-wider block">
+                  Subject Knowledge Track
+                </span>
+                <div className="text-2xl font-black text-[#111110] font-mono">
+                  {trackBreakdown.subjectScore != null ? `${trackBreakdown.subjectScore}%` : "N/A"}
+                </div>
+                <p className="text-xs text-[#6E6D68]">Core syllabus (OS, DBMS, OOP, System Design, Data Structures).</p>
+              </div>
+
+              <div className="p-4 bg-[#F6F5F0] rounded-xl border border-[#E0DFD9] hover:border-[#111110] transition-colors space-y-2">
+                <span className="font-mono text-[10px] font-bold text-[#6E6D68] uppercase tracking-wider block">
+                  Project Architecture Track
+                </span>
+                <div className="text-2xl font-black text-[#111110] font-mono">
+                  {trackBreakdown.projectScore != null ? `${trackBreakdown.projectScore}%` : "N/A"}
+                </div>
+                <p className="text-xs text-[#6E6D68]">Grounded resume exploration, engineering trade-offs, and live defense.</p>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Speech Emotion Recognition (8-Emotion Spectrum) */}
+        {report.voiceEmotions && (
+          <div className="bg-white border border-[#E0DFD9] rounded-2xl p-6 shadow-sm hover:shadow-md transition-all duration-300 space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-[#E0DFD9] pb-3">
+              <div className="flex items-center gap-2">
+                <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                <h2 className="text-base font-bold text-[#111110]">
+                  Speech Emotion Recognition (8-Emotion Wav2Vec Acoustic Model)
+                </h2>
+              </div>
+              <span className="px-3 py-0.5 bg-blue-50 text-[#1D5DFF] border border-blue-200 text-xs font-bold font-mono rounded-full capitalize self-start sm:self-auto">
+                Dominant Tone: {report.voiceEmotions.dominant || "Neutral"}
+              </span>
+            </div>
+
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-1">
               {[
-                { label: "Neutral", key: "neutral", icon: "😐", color: "bg-gray-500" },
-                { label: "Calm", key: "calm", icon: "😌", color: "bg-emerald-500" },
-                { label: "Happy", key: "happy", icon: "😊", color: "bg-amber-500" },
-                { label: "Sad", key: "sad", icon: "😔", color: "bg-blue-500" },
-                { label: "Angry", key: "angry", icon: "😠", color: "bg-rose-500" },
-                { label: "Fearful", key: "fearful", icon: "😨", color: "bg-purple-500" },
-                { label: "Disgust", key: "disgust", icon: "🤢", color: "bg-lime-600" },
-                { label: "Surprised", key: "surprised", icon: "😲", color: "bg-sky-500" },
+                { label: "Neutral", key: "neutral", color: "bg-gray-600" },
+                { label: "Calm", key: "calm", color: "bg-emerald-500" },
+                { label: "Happy", key: "happy", color: "bg-amber-500" },
+                { label: "Sad", key: "sad", color: "bg-blue-500" },
+                { label: "Angry", key: "angry", color: "bg-rose-500" },
+                { label: "Fearful", key: "fearful", color: "bg-purple-500" },
+                { label: "Disgust", key: "disgust", color: "bg-lime-600" },
+                { label: "Surprised", key: "surprised", color: "bg-sky-500" },
               ].map((emo) => {
                 const pct = report.voiceEmotions[emo.key] || 0;
                 return (
-                  <div key={emo.key} className="bg-[#FAF9F5] border border-[#E2DFD8] p-3 rounded-xl space-y-1.5">
-                    <div className="flex items-center justify-between text-xs font-semibold text-[#161615]">
-                      <span>{emo.icon} {emo.label}</span>
+                  <div key={emo.key} className="bg-[#FAF9F5] border border-[#E0DFD9] hover:border-[#111110] p-3 rounded-xl space-y-1.5 transition-colors">
+                    <div className="flex items-center justify-between text-xs font-semibold text-[#111110]">
+                      <span className="text-[#6E6D68]">{emo.label}</span>
                       <span className="font-mono font-bold">{pct}%</span>
                     </div>
-                    <div className="w-full bg-white h-2 rounded-full overflow-hidden border border-[#E2DFD8]">
-                      <div className={`h-full ${emo.color} rounded-full transition-all duration-500`} style={{ width: `${pct}%` }} />
+                    <div className="w-full bg-white h-2 rounded-full overflow-hidden border border-[#E0DFD9]">
+                      <div
+                        className={`h-full ${emo.color} rounded-full transition-all duration-700 ease-out`}
+                        style={{ width: `${pct}%` }}
+                      />
                     </div>
                   </div>
                 );
@@ -257,122 +384,172 @@ export default function ReportPage() {
           </div>
         )}
 
-        {/* Written Submission Details Section */}
-        {report.writingSubmission && (
-          <div className="bg-white border border-[#E0DFD9] rounded-2xl p-6 shadow-sm">
-            <h2 className="text-lg font-bold text-[#111110] mb-4 flex items-center gap-2">
-              <span>✍️</span> Written Evaluation Response
-            </h2>
-            <div className="bg-[#F6F5F0] p-4 rounded-xl text-xs text-[#111110]/80 font-mono whitespace-pre-wrap leading-relaxed max-h-48 overflow-y-auto border border-[#E0DFD9]">
-              {report.writingSubmission}
-            </div>
-          </div>
-        )}
-
-        {/* Candidate Resume Background Card */}
-        {report.resumeText && (
-          <div className="bg-white border border-[#E0DFD9] rounded-2xl p-6 shadow-sm space-y-3">
-            <h2 className="text-lg font-bold text-[#111110] flex items-center gap-2">
-              <span>📄</span> Candidate Resume Background & Extracted Text
-            </h2>
-            <div className="bg-[#F6F5F0] p-4 rounded-xl text-xs text-[#111110]/80 font-mono whitespace-pre-wrap leading-relaxed max-h-48 overflow-y-auto border border-[#E0DFD9]">
-              {report.resumeText}
-            </div>
-          </div>
-        )}
-
-        {/* Consolidated Strengths & Areas of Improvement */}
+        {/* Consolidated Strengths & Growth Recommendations */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          {/* Strengths Card */}
-          <div className="bg-white border border-[#E0DFD9] rounded-2xl p-6 shadow-sm space-y-4">
-            <div className="flex items-center gap-2.5 text-emerald-600 font-bold text-base border-b border-[#E0DFD9] pb-3">
-              <span>✨</span> Key Candidate Strengths
+          
+          {/* Strengths */}
+          <div className="bg-white border border-[#E0DFD9] rounded-2xl p-6 shadow-sm hover:shadow-md transition-all duration-300 space-y-4">
+            <div className="flex items-center gap-2 text-emerald-700 font-bold text-sm border-b border-[#E0DFD9] pb-3">
+              <span className="w-2 h-2 rounded-full bg-emerald-500" />
+              <span>Demonstrated Candidate Strengths</span>
             </div>
-            <ul className="space-y-2 text-xs text-[#111110]/80">
-              {(report.strengths || ["Demonstrated good domain readiness"]).map((s, idx) => (
-                <li key={idx} className="flex items-start gap-2 bg-emerald-50/50 p-2.5 rounded-xl border border-emerald-100">
-                  <span className="text-emerald-500 font-bold">✓</span>
+            <ul className="space-y-2.5 text-xs text-[#111110]">
+              {(report.strengths || ["Demonstrated good domain readiness and clear communication"]).map((s, idx) => (
+                <li key={idx} className="flex items-start gap-2.5 bg-emerald-50/60 p-3 rounded-xl border border-emerald-100 leading-relaxed">
+                  <svg className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                  </svg>
                   <span>{s}</span>
                 </li>
               ))}
             </ul>
           </div>
 
-          {/* Areas for Improvement Card */}
-          <div className="bg-white border border-[#E0DFD9] rounded-2xl p-6 shadow-sm space-y-4">
-            <div className="flex items-center gap-2.5 text-amber-600 font-bold text-base border-b border-[#E0DFD9] pb-3">
-              <span>🚀</span> Actionable Growth Recommendations
+          {/* Improvements */}
+          <div className="bg-white border border-[#E0DFD9] rounded-2xl p-6 shadow-sm hover:shadow-md transition-all duration-300 space-y-4">
+            <div className="flex items-center gap-2 text-amber-700 font-bold text-sm border-b border-[#E0DFD9] pb-3">
+              <span className="w-2 h-2 rounded-full bg-amber-500" />
+              <span>Actionable Growth Recommendations</span>
             </div>
-            <ul className="space-y-2 text-xs text-[#111110]/80">
-              {(report.improvements || ["Practice technical architecture depth"]).map((imp, idx) => (
-                <li key={idx} className="flex items-start gap-2 bg-amber-50/50 p-2.5 rounded-xl border border-amber-100">
-                  <span className="text-amber-500 font-bold">→</span>
+            <ul className="space-y-2.5 text-xs text-[#111110]">
+              {(report.improvements || ["Structure architecture answers with concrete operational trade-offs"]).map((imp, idx) => (
+                <li key={idx} className="flex items-start gap-2.5 bg-amber-50/60 p-3 rounded-xl border border-amber-100 leading-relaxed">
+                  <svg className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                  </svg>
                   <span>{imp}</span>
                 </li>
               ))}
             </ul>
           </div>
+
         </div>
 
-        {/* Per-Question Answer Analytics Accordion */}
-        <div className="bg-white border border-[#E0DFD9] rounded-2xl p-6 shadow-sm">
-          <h2 className="text-lg font-bold text-[#111110] mb-6 flex items-center justify-between">
-            <span className="flex items-center gap-2">
-              <span>📋</span> Recorded Answer Breakdown ({(report.answers || []).length} Questions)
+        {/* Question-by-Question Deep Analysis Accordion */}
+        <div className="bg-white border border-[#E0DFD9] rounded-2xl p-6 shadow-sm hover:shadow-md transition-all duration-300 space-y-6">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-[#E0DFD9] pb-4">
+            <div>
+              <h2 className="text-base font-bold text-[#111110] flex items-center gap-2">
+                <span className="w-2 h-2 rounded-full bg-[#1D5DFF]" />
+                Question-by-Question Analysis & Follow-Up Defense
+              </h2>
+              <p className="text-xs text-[#6E6D68] mt-0.5">
+                Detailed rubric evaluation across {(report.answers || []).length} recorded questions
+              </p>
+            </div>
+            <span className="font-mono text-[10px] text-[#6E6D68] uppercase tracking-wider">
+              Click row to toggle breakdown
             </span>
-            <span className="text-xs font-normal text-[#111110]/50">Click to expand details</span>
-          </h2>
+          </div>
 
-          <div className="space-y-4">
+          <div className="space-y-3">
             {(report.answers || []).map((answer, index) => {
               const isExpanded = expandedQuestion === index;
+              const nlp = answer.nlpAnalysis;
+              const trackLabel = answer.track === "project" ? "Project Track" : answer.track === "hr" ? "HR Behavioral" : "Technical Subject";
+
               return (
-                <div key={index} className="border border-[#E0DFD9] rounded-xl overflow-hidden transition-all">
+                <div
+                  key={index}
+                  className="border border-[#E0DFD9] rounded-xl overflow-hidden transition-all duration-200 hover:border-[#111110]"
+                >
                   <button
                     onClick={() => setExpandedQuestion(isExpanded ? null : index)}
-                    className="w-full p-4 bg-[#F6F5F0]/50 hover:bg-[#F6F5F0] flex items-center justify-between text-left transition-colors"
+                    className="w-full p-4 bg-[#FAF9F5] hover:bg-[#F6F5F0] flex items-center justify-between text-left transition-colors"
                   >
-                    <div>
-                      <span className="text-xs font-semibold text-[#1D5DFF]">Question {index + 1}</span>
-                      <h3 className="text-sm font-bold text-[#111110] mt-0.5">{answer.questionText}</h3>
+                    <div className="space-y-1.5 flex-1 pr-4">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="font-mono text-xs font-bold text-[#1D5DFF]">Question {index + 1}</span>
+                        <span className="font-mono text-[10px] uppercase px-2 py-0.5 rounded bg-gray-200/80 text-gray-800 font-semibold">
+                          {trackLabel}
+                        </span>
+                        {nlp?.overallScore != null && (
+                          <span className="font-mono text-[10px] font-extrabold px-2 py-0.5 rounded bg-blue-100 text-blue-900">
+                            {nlp.overallScore}% Score
+                          </span>
+                        )}
+                      </div>
+                      <h3 className="text-sm font-bold text-[#111110] leading-snug">{answer.questionText}</h3>
                     </div>
-                    <span className="text-sm text-[#111110]/40">{isExpanded ? "▲" : "▼"}</span>
+                    <div className="shrink-0 text-xs font-mono text-[#6E6D68] flex items-center gap-1">
+                      <span>{isExpanded ? "Collapse" : "Details"}</span>
+                      <svg
+                        className={`w-4 h-4 transition-transform duration-200 ${isExpanded ? "rotate-180" : ""}`}
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24"
+                      >
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19 9l-7 7-7-7" />
+                      </svg>
+                    </div>
                   </button>
 
                   {isExpanded && (
-                    <div className="p-5 border-t border-[#E0DFD9] bg-white space-y-4 text-xs">
-                      {/* Transcript */}
+                    <div className="p-5 border-t border-[#E0DFD9] bg-white space-y-5 text-xs animate-fade-in">
+                      
+                      {/* Spoken Transcript */}
                       {answer.voiceAnalysis?.transcript && (
                         <div>
-                          <span className="font-semibold text-[#111110]/60 uppercase tracking-wider block mb-1">Automated Transcript</span>
-                          <p className="bg-[#F6F5F0] p-3 rounded-lg text-[#111110]/90 leading-relaxed font-sans border border-[#E0DFD9]">
-                            "{answer.voiceAnalysis.transcript}"
+                          <span className="font-mono text-[10px] font-bold text-[#6E6D68] uppercase tracking-widest block mb-1.5">
+                            Candidate Spoken Transcript
+                          </span>
+                          <p className="bg-[#FAF9F5] p-3.5 rounded-xl text-[#111110] leading-relaxed font-sans border border-[#E0DFD9] italic">
+                            &ldquo;{answer.voiceAnalysis.transcript}&rdquo;
                           </p>
                         </div>
                       )}
 
-                      {/* Emotion & Facial Notes */}
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                        {answer.voiceAnalysis?.dominantEmotion && (
-                          <div className="bg-[#F6F5F0] p-3 rounded-lg border border-[#E0DFD9]">
-                            <span className="font-semibold text-[#111110]/60 uppercase tracking-wider block mb-1">Dominant Audio Emotion</span>
-                            <span className="text-sm font-bold text-[#1D5DFF] capitalize">
-                              {answer.voiceAnalysis.dominantEmotion}
-                            </span>
+                      {/* Multimodal NLP Rubrics Breakdown */}
+                      {nlp && (
+                        <div>
+                          <span className="font-mono text-[10px] font-bold text-[#6E6D68] uppercase tracking-widest block mb-2">
+                            NLP Dimension Evaluation
+                          </span>
+                          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                            {[
+                              { label: "Technical Accuracy", value: nlp.technicalAccuracy },
+                              { label: "Completeness", value: nlp.completeness },
+                              { label: "Clarity of Thought", value: nlp.clarity },
+                              { label: "Architectural Depth", value: nlp.depth },
+                              { label: "Candidate Confidence", value: nlp.confidence },
+                              { label: "Overall Question Score", value: nlp.overallScore },
+                            ].filter((d) => d.value != null).map((d) => (
+                              <div key={d.label} className="bg-[#FAF9F5] border border-[#E0DFD9] rounded-xl p-3 space-y-1">
+                                <div className="font-mono text-[10px] text-[#6E6D68] uppercase">{d.label}</div>
+                                <div className="text-xl font-bold font-mono text-[#111110]">{d.value}%</div>
+                              </div>
+                            ))}
                           </div>
-                        )}
+                        </div>
+                      )}
 
-                        {answer.faceAnalysis?.notes?.length > 0 && (
-                          <div className="bg-[#F6F5F0] p-3 rounded-lg border border-[#E0DFD9]">
-                            <span className="font-semibold text-[#111110]/60 uppercase tracking-wider block mb-1">Visual AI Notes</span>
-                            <ul className="list-disc list-inside space-y-1 text-[#111110]/80">
-                              {answer.faceAnalysis.notes.map((note, nIdx) => (
-                                <li key={nIdx}>{note}</li>
-                              ))}
-                            </ul>
+                      {/* AI Structured Feedback */}
+                      {nlp?.feedback && (
+                        <div className="bg-blue-50/60 border border-blue-100 rounded-xl p-4 space-y-1">
+                          <span className="font-mono text-[10px] font-bold text-[#1D5DFF] uppercase tracking-wider block">
+                            Evaluator Feedback
+                          </span>
+                          <p className="text-xs text-blue-950 leading-relaxed">{nlp.feedback}</p>
+                        </div>
+                      )}
+
+                      {/* Dynamic Follow-Up Question & Candidate Defense */}
+                      {answer.followUpQuestion && (
+                        <div className="border-t border-[#E0DFD9] pt-4 space-y-2">
+                          <span className="font-mono text-[10px] font-bold text-[#6E6D68] uppercase tracking-widest block">
+                            Dynamic AI Follow-Up Probe
+                          </span>
+                          <div className="p-3 bg-[#FAF9F5] border border-[#E0DFD9] rounded-xl space-y-1">
+                            <p className="text-xs font-bold text-[#111110]">{answer.followUpQuestion}</p>
+                            {answer.followUpAnswer && (
+                              <p className="text-xs text-[#6E6D68] leading-relaxed pt-1 italic">
+                                Candidate response: &ldquo;{answer.followUpAnswer}&rdquo;
+                              </p>
+                            )}
                           </div>
-                        )}
-                      </div>
+                        </div>
+                      )}
+
                     </div>
                   )}
                 </div>
@@ -381,17 +558,25 @@ export default function ReportPage() {
           </div>
         </div>
 
-        {/* Bottom Actions Bar */}
-        <div className="flex items-center justify-between pt-4">
-          <Link to="/" className="text-xs font-semibold text-[#111110]/60 hover:text-[#111110] transition-colors">
-            ← Return to Home
-          </Link>
-          <button
-            onClick={handlePrint}
-            className="px-6 py-2.5 bg-[#111110] hover:bg-black text-white rounded-xl text-xs font-semibold transition-colors"
-          >
-            Export Candidate Report (PDF)
-          </button>
+        {/* Footer Navigation Bar */}
+        <div className="border-t border-[#E0DFD9] pt-8 flex flex-col sm:flex-row items-center justify-between gap-4">
+          <div className="font-mono text-xs text-[#6E6D68]">
+            Assessment ID: <span className="font-semibold text-[#111110]">{String(sessionId)}</span>
+          </div>
+          <div className="flex items-center gap-3">
+            <Link
+              to="/history"
+              className="px-5 py-2.5 bg-white border border-[#E0DFD9] hover:border-[#111110] text-[#111110] text-xs font-semibold rounded-xl transition-colors shadow-sm"
+            >
+              ← View All History
+            </Link>
+            <Link
+              to="/interview/setup"
+              className="px-5 py-2.5 bg-[#111110] hover:bg-[#1D5DFF] text-white text-xs font-semibold rounded-xl transition-colors shadow-sm"
+            >
+              Start New Practice →
+            </Link>
+          </div>
         </div>
 
       </div>

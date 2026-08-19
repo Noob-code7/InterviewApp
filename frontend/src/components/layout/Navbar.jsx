@@ -18,29 +18,30 @@ export default function Navbar() {
   };
 
   return (
-    <header className="sticky top-0 z-50 bg-[#F6F5F0]/95 backdrop-blur-sm border-b border-[#E0DFD9]">
+    <header className="sticky top-0 z-50 bg-[#F6F5F0]/95 backdrop-blur-md border-b border-[#E0DFD9] transition-all">
       <div className="max-w-6xl mx-auto px-6 h-16 flex items-center justify-between">
         {/* Logo */}
         <Link
           to="/"
-          className="font-mono text-sm font-semibold tracking-wider text-[#111110] flex items-center gap-1.5"
+          className="font-mono text-sm font-extrabold tracking-wider text-[#111110] flex items-center gap-2 hover:opacity-85 transition-opacity"
         >
+          <span className="w-2.5 h-2.5 bg-[#1D5DFF] rounded-sm inline-block" />
           <span>INTERVIEWAI</span>
         </Link>
 
-        {/* Nav links — only when authenticated */}
+        {/* Nav links - when authenticated */}
         {isAuthenticated && (
-          <nav className="hidden md:flex items-center gap-6">
+          <nav className="hidden md:flex items-center gap-8">
             {NAV_LINKS.map(({ to, label }) => (
               <NavLink
                 key={label}
                 to={to}
                 end={to === "/"}
                 className={({ isActive }) =>
-                  `text-sm font-medium transition-colors duration-150 ${
+                  `text-sm font-semibold transition-all duration-150 relative py-1 ${
                     isActive
-                      ? "text-[#1D5DFF] font-semibold"
-                      : "text-[#6E6D68] hover:text-[#111110]"
+                      ? "text-[#111110] after:absolute after:bottom-0 after:left-0 after:right-0 after:h-0.5 after:bg-[#1D5DFF]"
+                      : "text-[#4B5563] hover:text-[#111110]"
                   }`
                 }
               >
@@ -50,10 +51,10 @@ export default function Navbar() {
             <NavLink
               to="/faculty"
               className={({ isActive }) =>
-                `text-sm font-medium transition-colors duration-150 ${
+                `text-sm font-semibold transition-all duration-150 relative py-1 ${
                   isActive
-                    ? "text-[#1D5DFF] font-semibold"
-                    : "text-[#6E6D68] hover:text-[#111110]"
+                    ? "text-[#111110] after:absolute after:bottom-0 after:left-0 after:right-0 after:h-0.5 after:bg-[#1D5DFF]"
+                    : "text-[#4B5563] hover:text-[#111110]"
                 }`
               }
             >
@@ -62,14 +63,13 @@ export default function Navbar() {
           </nav>
         )}
 
-        {/* Right section */}
+        {/* Right action area */}
         <div className="flex items-center gap-4">
           {isAuthenticated ? (
             <div className="flex items-center gap-3">
-              {/* User Avatar */}
               <Link
                 to="/profile"
-                className="w-9 h-9 rounded-full bg-[#111110] text-[#F6F5F0] flex items-center justify-center text-xs font-semibold font-mono hover:ring-2 hover:ring-[#1D5DFF] transition-all"
+                className="w-9 h-9 rounded-lg bg-[#111110] text-[#F6F5F0] flex items-center justify-center text-xs font-bold font-mono hover:bg-[#1D5DFF] transition-all duration-200 shadow-sm"
                 title={user?.name || "Profile"}
               >
                 {user?.name?.charAt(0)?.toUpperCase() || "U"}
@@ -77,22 +77,22 @@ export default function Navbar() {
 
               <button
                 onClick={handleLogout}
-                className="text-xs font-semibold text-[#6E6D68] hover:text-red-600 transition-colors"
+                className="text-xs font-bold text-[#4B5563] hover:text-red-600 transition-colors px-2 py-1"
               >
                 Sign out
               </button>
             </div>
           ) : (
-            <div className="flex items-center gap-4">
+            <div className="flex items-center gap-3">
               <button
                 onClick={() => navigate("/login")}
-                className="text-sm text-[#6E6D68] hover:text-[#111110] transition-colors"
+                className="text-sm font-bold text-[#4B5563] hover:text-[#111110] transition-colors px-3 py-2"
               >
                 Sign in
               </button>
               <button
                 onClick={() => navigate("/register")}
-                className="bg-[#111110] text-[#F6F5F0] text-sm px-4 py-2 rounded hover:bg-[#2A2A28] transition-colors font-medium"
+                className="bg-[#111110] text-[#F6F5F0] text-sm px-5 py-2.5 rounded-lg hover:bg-[#1D5DFF] transition-all duration-200 font-bold shadow-sm active:scale-98"
               >
                 Start practicing →
               </button>

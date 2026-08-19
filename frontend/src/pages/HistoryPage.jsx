@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, Link } from "react-router-dom";
 import { sessionsApi } from "../api/sessions.js";
 
 export default function HistoryPage() {
@@ -21,7 +21,6 @@ export default function HistoryPage() {
         setLoading(false);
       }
     };
-
     fetchHistory();
   }, []);
 
@@ -33,159 +32,158 @@ export default function HistoryPage() {
 
   const formatDate = (dateStr) => {
     if (!dateStr) return "N/A";
-    const date = new Date(dateStr);
-    return date.toLocaleDateString("en-US", {
-      month: "short",
-      day: "numeric",
-      year: "numeric",
-    });
+    return new Date(dateStr).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
   };
 
+  const FILTERS = [
+    { id: "all", label: "ALL SESSIONS" },
+    { id: "completed", label: "COMPLETED" },
+    { id: "in-progress", label: "IN PROGRESS" },
+  ];
+
+  const STAT_ITEMS = stats ? [
+    { label: "PRACTICE SESSIONS", value: stats.totalSessions ?? 0 },
+    { label: "COMPLETED EVALUATIONS", value: stats.completedSessions ?? 0 },
+    { label: "AVERAGE SCORE", value: stats.avgScore != null ? `${stats.avgScore}%` : "--" },
+    { label: "PEAK PERFORMANCE", value: stats.bestScore != null ? `${stats.bestScore}%` : "--", highlight: true },
+  ] : [];
+
   return (
-    <div className="min-h-screen bg-[#F6F5F0] text-[#111110] font-sans pt-8 pb-16 px-6">
-      <div className="max-w-6xl mx-auto space-y-8">
-        
-        {/* Header Title & CTA */}
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-[#E0DFD9] pb-6">
+    <div className="min-h-screen bg-[#F6F5F0] text-[#111110] font-sans pt-10 pb-20 px-6">
+      <div className="max-w-5xl mx-auto space-y-8 animate-fade-in">
+
+        {/* Top Header */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-[#E0DFD9] pb-6">
           <div>
-            <div className="font-mono text-xs text-[#1D5DFF] tracking-widest uppercase mb-1 font-semibold">
-              CANDIDATE TELEMETRY LOGS
-            </div>
-            <h1 className="text-3xl font-bold tracking-tight text-[#111110]">
-              Interview Practice History
+            <span className="font-mono text-xs font-bold uppercase text-[#1D5DFF] tracking-wider block mb-1">
+              CANDIDATE LOGS
+            </span>
+            <h1 className="text-3xl font-extrabold text-[#111110] tracking-tight">
+              Interview History & Reports
             </h1>
-            <p className="text-xs text-[#6E6D68] mt-1">
-              Review past practice sessions, AI score breakdowns, and readiness trajectory.
+            <p className="text-xs text-[#4B5563] font-medium mt-1">
+              Audit historical practice sessions, multimodal scores, and readiness trajectories.
             </p>
           </div>
-
           <button
-            onClick={() => navigate("/")}
-            className="px-6 py-3 bg-[#1D5DFF] hover:bg-blue-600 text-white font-semibold text-xs rounded-xl shadow-md shadow-[#1D5DFF]/20 transition-all self-start md:self-auto"
+            onClick={() => navigate("/interview/setup")}
+            className="bg-[#111110] hover:bg-[#1D5DFF] text-white px-6 py-3 rounded-lg text-xs font-bold transition-all duration-200 shadow-sm active:scale-98 shrink-0 self-start sm:self-auto"
           >
             + Start New Practice
           </button>
         </div>
 
-        {/* Top Summary Stats Grid */}
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-          <div className="bg-white border border-[#E0DFD9] rounded-2xl p-5 shadow-sm space-y-1">
-            <div className="font-mono text-[10px] text-[#6E6D68] uppercase tracking-wider font-medium">
-              Total Practice Sessions
-            </div>
-            <div className="text-2xl font-bold font-mono text-[#111110]">
-              {loading ? "..." : stats?.totalSessions || 0}
-            </div>
+        {/* Stats Grid */}
+        {stats && (
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+            {STAT_ITEMS.map((s) => (
+              <div key={s.label} className="bg-white border border-[#E0DFD9] rounded-2xl p-5 shadow-sm hover:shadow-md transition-all">
+                <div className="font-mono text-[10px] font-bold uppercase text-[#6B7280] tracking-wider mb-2">
+                  {s.label}
+                </div>
+                <div className={`text-2xl sm:text-3xl font-extrabold font-mono ${s.highlight ? "text-[#1D5DFF]" : "text-[#111110]"}`}>
+                  {s.value}
+                </div>
+              </div>
+            ))}
           </div>
+        )}
 
-          <div className="bg-white border border-[#E0DFD9] rounded-2xl p-5 shadow-sm space-y-1">
-            <div className="font-mono text-[10px] text-[#6E6D68] uppercase tracking-wider font-medium">
-              Completed Assessments
-            </div>
-            <div className="text-2xl font-bold font-mono text-emerald-600">
-              {loading ? "..." : stats?.completedCount || 0}
-            </div>
-          </div>
-
-          <div className="bg-white border border-[#E0DFD9] rounded-2xl p-5 shadow-sm space-y-1">
-            <div className="font-mono text-[10px] text-[#6E6D68] uppercase tracking-wider font-medium">
-              Average AI Score
-            </div>
-            <div className="text-2xl font-bold font-mono text-[#1D5DFF]">
-              {loading ? "..." : stats?.averageScore ? `${stats.averageScore}%` : "—"}
-            </div>
-          </div>
-
-          <div className="bg-white border border-[#E0DFD9] rounded-2xl p-5 shadow-sm space-y-1">
-            <div className="font-mono text-[10px] text-[#6E6D68] uppercase tracking-wider font-medium">
-              Current Readiness Trajectory
-            </div>
-            <div className="text-xs font-semibold font-mono text-amber-600 truncate pt-1">
-              {loading ? "..." : stats?.readinessLevel || "Not Evaluated"}
-            </div>
-          </div>
-        </div>
-
-        {/* Filter Controls */}
-        <div className="flex items-center gap-2 border-b border-[#E0DFD9] pb-4">
-          <span className="font-mono text-xs text-[#6E6D68] mr-2">Filter:</span>
-          {["all", "completed", "in-progress"].map((t) => (
+        {/* Filter Navigation Tabs */}
+        <div className="flex items-center gap-2 border-b border-[#E0DFD9] pb-2">
+          {FILTERS.map((f) => (
             <button
-              key={t}
-              onClick={() => setFilter(t)}
-              className={`px-4 py-1.5 rounded-lg text-xs font-mono capitalize transition-colors ${
-                filter === t
-                  ? "bg-[#1D5DFF] text-white font-medium shadow-sm"
-                  : "bg-white text-[#6E6D68] hover:text-[#111110] border border-[#E0DFD9]"
+              key={f.id}
+              onClick={() => setFilter(f.id)}
+              className={`px-4 py-2 text-xs font-mono font-bold rounded-lg transition-all ${
+                filter === f.id
+                  ? "bg-[#111110] text-white"
+                  : "bg-white text-[#4B5563] border border-[#E0DFD9] hover:border-[#111110] hover:text-[#111110]"
               }`}
             >
-              {t === "in-progress" ? "In Progress" : t}
+              {f.label}
             </button>
           ))}
         </div>
 
-        {/* Sessions List */}
+        {/* Session Cards List */}
         {loading ? (
-          <div className="py-20 text-center space-y-3">
-            <div className="w-8 h-8 border-2 border-[#1D5DFF] border-t-transparent rounded-full animate-spin mx-auto" />
-            <p className="font-mono text-xs text-[#6E6D68]">Loading practice logs...</p>
+          <div className="space-y-3">
+            {[1, 2, 3].map((i) => (
+              <div key={i} className="bg-white border border-[#E0DFD9] rounded-xl p-5 animate-pulse space-y-2">
+                <div className="h-4 bg-[#E0DFD9] rounded w-1/3" />
+                <div className="h-3 bg-[#E0DFD9] rounded w-1/2" />
+              </div>
+            ))}
           </div>
         ) : filteredSessions.length === 0 ? (
-          <div className="bg-white border border-[#E0DFD9] rounded-2xl p-12 text-center space-y-4 shadow-sm">
-            <div className="text-4xl">📁</div>
-            <h3 className="text-base font-bold text-[#111110]">No sessions found</h3>
-            <p className="text-xs text-[#6E6D68] max-w-sm mx-auto">
-              You haven't completed any practice sessions matching this filter yet.
+          <div className="bg-white border border-[#E0DFD9] rounded-2xl p-12 text-center space-y-4">
+            <div className="font-mono text-xs font-bold uppercase text-[#6B7280] tracking-wider">
+              NO RECORDS FOUND
+            </div>
+            <p className="text-sm text-[#4B5563] font-medium max-w-sm mx-auto">
+              You haven&apos;t completed any interview sessions matching this filter. Launch your first mock session!
             </p>
+            <button
+              onClick={() => navigate("/interview/setup")}
+              className="bg-[#111110] hover:bg-[#1D5DFF] text-white px-6 py-2.5 rounded-lg text-xs font-bold transition-colors"
+            >
+              Launch Interview Practice →
+            </button>
           </div>
         ) : (
           <div className="space-y-3">
-            {filteredSessions.map((session) => (
-              <div
-                key={session._id}
-                className="bg-white border border-[#E0DFD9] hover:border-[#1D5DFF]/60 rounded-2xl p-5 flex flex-col md:flex-row md:items-center justify-between gap-4 transition-all shadow-sm group"
-              >
-                <div className="space-y-1">
-                  <div className="flex items-center gap-2">
-                    <span className="font-bold text-base text-[#111110]">
-                      {session.role || "General Role"}
-                    </span>
-                    <span className="px-2.5 py-0.5 rounded-md bg-[#F6F5F0] border border-[#E0DFD9] text-[10px] font-mono text-[#1D5DFF] capitalize font-medium">
-                      {session.interviewType || "mixed"}
-                    </span>
-                  </div>
-                  <div className="text-xs text-[#6E6D68] flex items-center gap-3">
-                    <span>{formatDate(session.createdAt)}</span>
-                    <span>•</span>
-                    <span>{session.questionCount || 5} Questions</span>
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-6 self-end md:self-auto">
-                  {session.status === "completed" ? (
-                    <div className="text-right">
-                      <div className="font-mono text-[10px] text-[#6E6D68]">OVERALL SCORE</div>
-                      <div className="font-mono text-lg font-bold text-[#1D5DFF]">
-                        {session.overallScore != null ? `${session.overallScore}%` : "—"}
-                      </div>
+            {filteredSessions.map((session) => {
+              const isCompleted = session.status === "completed";
+              return (
+                <div
+                  key={session._id}
+                  onClick={() => isCompleted && navigate(`/report/${session._id}`)}
+                  className={`p-5 bg-white rounded-xl border border-[#E0DFD9] transition-all duration-200 flex flex-col sm:flex-row sm:items-center justify-between gap-4 ${
+                    isCompleted
+                      ? "hover:border-[#111110] hover:shadow-md cursor-pointer card-hover"
+                      : "opacity-75"
+                  }`}
+                >
+                  <div className="space-y-1.5 flex-1 min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="font-mono text-[10px] font-bold uppercase px-2.5 py-0.5 rounded bg-[#FAF9F5] text-[#111110] border border-[#E0DFD9]">
+                        {session.interviewType || "Technical"}
+                      </span>
+                      {isCompleted ? (
+                        <span className="font-mono text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded">
+                          COMPLETED
+                        </span>
+                      ) : (
+                        <span className="font-mono text-[10px] font-bold text-amber-700 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded">
+                          {session.status.toUpperCase()}
+                        </span>
+                      )}
                     </div>
-                  ) : (
-                    <span className="px-3 py-1 rounded-full bg-amber-50 text-amber-700 border border-amber-200 text-xs font-mono capitalize">
-                      {session.status}
-                    </span>
-                  )}
+                    <h3 className="text-base font-extrabold text-[#111110] truncate">{session.role || "Engineering Practice"}</h3>
+                    <div className="text-xs text-[#4B5563] font-medium flex items-center gap-3">
+                      <span>Candidate: <strong>{session.candidateName || "Candidate"}</strong></span>
+                      <span>•</span>
+                      <span>Date: <strong>{formatDate(session.completedAt || session.createdAt)}</strong></span>
+                    </div>
+                  </div>
 
-                  {session.status === "completed" && (
-                    <button
-                      onClick={() => navigate(`/report/${session._id}`)}
-                      className="px-4 py-2 bg-[#111110] hover:bg-[#1D5DFF] text-white rounded-xl text-xs font-semibold transition-all shadow-sm"
-                    >
+                  <div className="flex items-center gap-6 shrink-0 border-t sm:border-t-0 pt-3 sm:pt-0">
+                    {isCompleted && (
+                      <div className="text-right">
+                        <div className="font-mono text-[10px] font-bold text-[#6B7280] uppercase">SCORE</div>
+                        <div className="text-2xl font-black font-mono text-[#111110]">
+                          {session.overallScore != null ? `${session.overallScore}%` : "--"}
+                        </div>
+                      </div>
+                    )}
+                    <span className="text-sm font-bold text-[#1D5DFF] hidden sm:inline">
                       View Report →
-                    </button>
-                  )}
+                    </span>
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
 

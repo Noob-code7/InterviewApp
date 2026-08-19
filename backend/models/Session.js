@@ -1,17 +1,4 @@
-import mongoose from 'mongoose'
-
-// ── Sub-schemas ─ reserved slots for the two custom ML models ────────────────
-//
-//  🎥  VIDEO MODEL  → ai-services/face-service
-//      Output shape:  faceAnalysisSchema
-//      Status:        STUB — drop model into face-service/main.py when ready
-//
-//  🎙️  AUDIO MODEL  → ai-services/voice-service
-//      Output shape:  voiceAnalysisSchema
-//      Status:        STUB — drop model into voice-service/main.py when ready
-//
-// The Session schema requires NO changes when the models are integrated.
-// ─────────────────────────────────────────────────────────────────────────────
+﻿import mongoose from 'mongoose'
 
 const faceAnalysisSchema = new mongoose.Schema({
   confidenceScore:  { type: Number, default: null },
@@ -19,7 +6,7 @@ const faceAnalysisSchema = new mongoose.Schema({
   attentionScore:   { type: Number, default: null },
   eyeContactScore:  { type: Number, default: null },
   notes:            { type: [String], default: [] },
-  // ⬇ RESERVED — populated by video ML model (face-service)
+  faceSubstitutionAlert: { type: Boolean, default: false },
 }, { _id: false })
 
 const voiceAnalysisSchema = new mongoose.Schema({
@@ -27,38 +14,56 @@ const voiceAnalysisSchema = new mongoose.Schema({
   confidenceScore:  { type: Number,  default: null },
   fluencyScore:     { type: Number,  default: null },
   fillerWordCount:  { type: Number,  default: null },
-  speakingSpeed:    { type: Number,  default: null }, // words-per-minute
+  speakingSpeed:    { type: Number,  default: null },
   clarityScore:     { type: Number,  default: null },
-  // ⬇ RESERVED — populated by audio ML model (voice-service)
+  emotionProbabilities: { type: mongoose.Schema.Types.Mixed, default: null },
+  dominantEmotion:      { type: String, default: 'neutral' },
 }, { _id: false })
 
-const nlpAnalysisSchema = new mongoose.Schema({
-  relevanceScore:    { type: Number, default: null },
-  correctnessScore:  { type: Number, default: null },
-  completenessScore: { type: Number, default: null },
-  communicationScore: { type: Number, default: null },
-  structureScore:    { type: Number, default: null },
-  grammarScore:      { type: Number, default: null },
-  overallScore:      { type: Number, default: null },
-  feedback:          { type: String, default: '' },
-  strengths:         { type: [String], default: [] },
-  improvements:      { type: [String], default: [] },
+const nlpAnalysisSchema = new mongoose.Schema({
+  relevanceScore:    { type: Number, default: null },
+  correctnessScore:  { type: Number, default: null },
+  completenessScore: { type: Number, default: null },
+  communicationScore: { type: Number, default: null },
+  structureScore:    { type: Number, default: null },
+  grammarScore:      { type: Number, default: null },
+  overallScore:      { type: Number, default: null },
+  feedback:          { type: String, default: '' },
+  strengths:         { type: [String], default: [] },
+  improvements:      { type: [String], default: [] },
+  source:            { type: String, default: 'local' },
 }, { _id: false })
 
-// ── Per-answer sub-schema ────────────────────────────────────────────────────
-const answerSchema = new mongoose.Schema({
-  questionId:    { type: String, required: true },
+const followUpSchema = new mongoose.Schema({
   questionText:  { type: String, required: true },
+  transcript:    { type: String, default: '' },
+  turn:          { type: Number, default: 1 },
   startedAt:     { type: Date },
   completedAt:   { type: Date },
-  videoUrl:      { type: String, default: '' }, // Cloudinary — Phase 4
-  audioUrl:      { type: String, default: '' }, // Cloudinary — Phase 4
+  videoUrl:      { type: String, default: '' },
+  audioUrl:      { type: String, default: '' },
   faceAnalysis:  { type: faceAnalysisSchema,  default: () => ({}) },
   voiceAnalysis: { type: voiceAnalysisSchema, default: () => ({}) },
   nlpAnalysis:   { type: nlpAnalysisSchema,   default: () => ({}) },
 }, { _id: false })
 
-// ── Main Session schema ──────────────────────────────────────────────────────
+// ── Per-answer sub-schema ───────────────────────────────────────────────────────
+const answerSchema = new mongoose.Schema({
+  questionId:     { type: String, required: true },
+  questionText:   { type: String, required: true },
+  track:          { type: String, default: 'subject' },
+  projectContext: { type: mongoose.Schema.Types.Mixed, default: null },
+  startedAt:      { type: Date },
+  completedAt:    { type: Date },
+  videoUrl:       { type: String, default: '' },
+  audioUrl:       { type: String, default: '' },
+  faceAnalysis:   { type: faceAnalysisSchema,  default: () => ({}) },
+  voiceAnalysis:  { type: voiceAnalysisSchema, default: () => ({}) },
+  nlpAnalysis:    { type: nlpAnalysisSchema,   default: () => ({}) },
+  followUps:      { type: [followUpSchema],    default: [] },
+}, { _id: false })
+
+// ── Main Session schema ─────────────────────────────────────────────────────────
 const sessionSchema = new mongoose.Schema(
   {
     userId: {
@@ -107,7 +112,7 @@ const sessionSchema = new mongoose.Schema(
     writingTask:        { type: String, default: '' },
     writingSubmission:  { type: String, default: '' },
     writingAnalysis:    { type: mongoose.Schema.Types.Mixed, default: null },
-    // Resume Based Mode — Phase 8
+    // Resume Based Mode
     resumeUrl:          { type: String, default: '' },
     resumeText:         { type: String, default: '' },
     // Report
@@ -116,6 +121,8 @@ const sessionSchema = new mongoose.Schema(
     // Face verification
     referenceImageUrl: { type: String, default: '' },
     faceSubstitutionAlert: { type: Boolean, default: false },
+    // Media privacy
+    mediaDeleted: { type: Boolean, default: false },
   },
   { timestamps: true, toJSON: { virtuals: true }, toObject: { virtuals: true } }
 )
@@ -132,4 +139,4 @@ sessionSchema.virtual('durationLabel').get(function () {
 })
 
 const Session = mongoose.model('Session', sessionSchema)
-export default Session
+export default Session

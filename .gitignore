@@ -37,3 +37,6 @@ backend/uploads/
 # Large model weights (download or generate locally, do not commit)
 SER_model/*.pth
 SER_model/*.zip
+
+# Local LLM / SLM weights (avoid committing model binaries)
+ai-services/nlp-service/models/
