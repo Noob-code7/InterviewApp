@@ -174,11 +174,9 @@ Follow-up questions evaluated 2/2; report 200.
 - [ ] Reboot test: restart Windows → `pm2-windows-startup` restores all 5 apps → stale `processing` jobs re-queued by `recoverJobs`/`startRecoverySweep`
 
 ### 6.2 Known issue to fix before/at college deploy
-- [ ] **`reload=True` is hardcoded** in `ai-services/face-service/main.py:223` and
-  `ai-services/voice-service/main.py:323`. In dev this tangles reloader/worker processes
-  (face service on :8001 became unresponsive; voice degraded the same way during testing).
-  Under PM2 this is wasteful and can orphan watchers. **Recommended:** gate reload on env,
-  e.g. `reload=os.getenv("UVICORN_RELOAD", "false").lower() == "true"` (PM2 runs without it).
+- [x] **`reload=True` gating applied** — `ai-services/face-service/main.py:223` and
+  `ai-services/voice-service/main.py:323` now read `reload = os.getenv("UVICORN_RELOAD",
+  "false").lower() == "true"` (default off). PM2 runs without reload; dev can opt in via env.
 - [ ] Decide `ANALYSIS_SESSION_CONCURRENCY` value by benchmarking the actual lab hardware
   (`backend/scripts/benchmark_concurrency_levels.js`) — current `college.env.example` uses 2.
 

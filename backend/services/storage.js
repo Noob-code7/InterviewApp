@@ -7,6 +7,7 @@ import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import path from "path";
 import fs from "fs";
 import { fileURLToPath } from "url";
+import { storageService } from "./storageService.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -29,6 +30,12 @@ export async function uploadBuffer(
   key,
   contentType = "application/octet-stream",
 ) {
+  // Consolidated path: when Cloudflare R2 is configured, ALL uploads go to R2
+  // so the analysis pipeline (storageService.getObjectBuffer) can always resolve them.
+  if (storageService.isR2Configured()) {
+    return storageService.putObjectBuffer({ key, buffer, contentType });
+  }
+
   // If S3 is validly configured, attempt upload to S3 / Cloudflare R2
   if (useS3 && s3) {
     try {

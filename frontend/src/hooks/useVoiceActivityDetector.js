@@ -1,20 +1,21 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 
 /**
- * Reliable Voice Activity Detector (VAD) with Barge-In Interruption Support.
- * Continuously computes Root-Mean-Square (RMS) amplitude and detects speech energy.
+ * Production-Grade Voice Activity Detector (VAD) with Stable AudioContext.
+ * Uses persistent refs for callbacks and configuration to prevent React re-render
+ * dependency cascades from tearing down the Web Audio API loop or resetting timing state.
  */
 export function useVoiceActivityDetector({
   stream,
   enabled = true,
   bargeInEnabled = false,
-  speechThreshold = 0.025, // RMS threshold for human speech over background noise
-  bargeInThreshold = 0.038, // Elevated threshold during TTS to reject speaker echo & background hum
-  bargeInSustainMs = 120, // 120ms sustained speech for sub-150ms end-to-end barge-in latency
-  silenceThresholdMs = 2200, // Standard silence duration after meaningful speech
-  thinkingGracePeriodMs = 4000, // Extended grace period before candidate begins or during deep pauses
-  minAnswerDurationMs = 3000, // Minimum recording time before silence cutoff can trigger
-  minWordCount = 4, // Minimum words required for standard silence cutoff
+  speechThreshold = 0.025,
+  bargeInThreshold = 0.038,
+  bargeInSustainMs = 120,
+  silenceThresholdMs = 2200,
+  thinkingGracePeriodMs = 4000,
+  minAnswerDurationMs = 3000,
+  minWordCount = 4,
   onSpeechStart,
   onSpeechEnd,
   onAnswerComplete,
@@ -28,46 +29,84 @@ export function useVoiceActivityDetector({
   const sourceRef = useRef(null);
   const animFrameRef = useRef(null);
 
-  // VAD Timing Refs
+  // Persistent Callback & Config Refs (Prevents useEffect teardown on re-render)
+  const enabledRef = useRef(enabled);
+  enabledRef.current = enabled;
+
+  const bargeInEnabledRef = useRef(bargeInEnabled);
+  bargeInEnabledRef.current = bargeInEnabled;
+
+  const speechThresholdRef = useRef(speechThreshold);
+  speechThresholdRef.current = speechThreshold;
+
+  const bargeInThresholdRef = useRef(bargeInThreshold);
+  bargeInThresholdRef.current = bargeInThreshold;
+
+  const bargeInSustainMsRef = useRef(bargeInSustainMs);
+  bargeInSustainMsRef.current = bargeInSustainMs;
+
+  const silenceThresholdMsRef = useRef(silenceThresholdMs);
+  silenceThresholdMsRef.current = silenceThresholdMs;
+
+  const thinkingGracePeriodMsRef = useRef(thinkingGracePeriodMs);
+  thinkingGracePeriodMsRef.current = thinkingGracePeriodMs;
+
+  const minAnswerDurationMsRef = useRef(minAnswerDurationMs);
+  minAnswerDurationMsRef.current = minAnswerDurationMs;
+
+  const minWordCountRef = useRef(minWordCount);
+  minWordCountRef.current = minWordCount;
+
+  const onSpeechStartRef = useRef(onSpeechStart);
+  onSpeechStartRef.current = onSpeechStart;
+
+  const onSpeechEndRef = useRef(onSpeechEnd);
+  onSpeechEndRef.current = onSpeechEnd;
+
+  const onAnswerCompleteRef = useRef(onAnswerComplete);
+  onAnswerCompleteRef.current = onAnswerComplete;
+
+  const onBargeInRef = useRef(onBargeIn);
+  onBargeInRef.current = onBargeIn;
+
+  // Persistent VAD Timing & State Refs Across Re-renders
   const recordingStartTimeRef = useRef(0);
   const lastSpeechTimeRef = useRef(0);
   const hasSpokenRef = useRef(false);
   const isSpeakingRef = useRef(false);
-  const silenceTimerRef = useRef(null);
   const lastTranscriptTextRef = useRef("");
   const lastTranscriptChangeTimeRef = useRef(0);
-  const bargeInOnsetRef = useRef(0); // Exact timestamp when candidate speech onset was first detected
+  const bargeInOnsetRef = useRef(0);
   const hasFiredBargeInRef = useRef(false);
+  const hasFiredCompletionRef = useRef(false);
 
-  const isEnabledRef = useRef(enabled);
-  isEnabledRef.current = enabled;
-  const isBargeInEnabledRef = useRef(bargeInEnabled);
-  isBargeInEnabledRef.current = bargeInEnabled;
-
-  // Update transcript stability trackers & Web Speech-backed barge-in
+  // Update transcript stability trackers & STT-backed barge-in
   const notifyTranscriptUpdate = useCallback((newTranscript) => {
     const text = (newTranscript || "").trim();
     if (text !== lastTranscriptTextRef.current) {
       lastTranscriptTextRef.current = text;
-      lastTranscriptChangeTimeRef.current = Date.now();
-      lastSpeechTimeRef.current = Date.now();
+      const now = Date.now();
+      lastTranscriptChangeTimeRef.current = now;
+      lastSpeechTimeRef.current = now;
 
-      // If Web Speech recognizes text while barge-in is enabled, trigger immediately
-      if (isBargeInEnabledRef.current && !hasFiredBargeInRef.current && text.length > 0) {
+      // STT-backed barge-in
+      if (bargeInEnabledRef.current && !hasFiredBargeInRef.current && text.length > 0) {
         hasFiredBargeInRef.current = true;
-        const now = performance.now();
+        const perfNow = performance.now();
         console.log("[VAD] Web Speech detected candidate speech during TTS -> Barge-In Triggered");
-        if (onBargeIn) onBargeIn({ source: "stt_interim", text, onsetTime: now, timestamp: now });
+        if (onBargeInRef.current) {
+          onBargeInRef.current({ source: "stt_interim", text, onsetTime: perfNow, timestamp: perfNow });
+        }
       }
 
       if (!hasSpokenRef.current && text.length > 0) {
         hasSpokenRef.current = true;
-        if (onSpeechStart) onSpeechStart();
+        if (onSpeechStartRef.current) onSpeechStartRef.current();
       }
     }
-  }, [onBargeIn, onSpeechStart]);
+  }, []);
 
-  // Start / reset VAD session
+  // Explicit Session Lifecycle Managers
   const startSession = useCallback(() => {
     const now = Date.now();
     recordingStartTimeRef.current = now;
@@ -78,25 +117,25 @@ export function useVoiceActivityDetector({
     isSpeakingRef.current = false;
     bargeInOnsetRef.current = 0;
     hasFiredBargeInRef.current = false;
-    setIsSpeaking(false);
-    if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
-  }, []);
-
-  const stopSession = useCallback(() => {
-    if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
-    if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
-    isSpeakingRef.current = false;
+    hasFiredCompletionRef.current = false;
     setIsSpeaking(false);
   }, []);
 
+  // Whenever enabled shifts from false -> true (e.g. entering LISTENING mode), start a fresh session without tearing down AudioContext
+  const prevEnabledRef = useRef(enabled);
   useEffect(() => {
-    if ((!enabled && !bargeInEnabled) || !stream) {
-      stopSession();
-      return;
+    if (!prevEnabledRef.current && enabled) {
+      console.log("[VAD Engine] Entering active listening session -> Resetting VAD session timers.");
+      startSession();
     }
+    prevEnabledRef.current = enabled;
+  }, [enabled, startSession]);
 
-    hasFiredBargeInRef.current = false;
-    bargeInOnsetRef.current = 0;
+  // Audio Context & Analyser Loop (DEPENDS ONLY ON stream)
+  useEffect(() => {
+    if (!stream) return;
+
+    let isAudioLoopActive = true;
 
     try {
       const AudioCtx = window.AudioContext || window.webkitAudioContext;
@@ -119,7 +158,7 @@ export function useVoiceActivityDetector({
       const dataArray = new Uint8Array(analyser.frequencyBinCount);
 
       const checkAudioLevel = () => {
-        if ((!isEnabledRef.current && !isBargeInEnabledRef.current) || !analyserRef.current) return;
+        if (!isAudioLoopActive || !analyserRef.current) return;
 
         analyserRef.current.getByteTimeDomainData(dataArray);
 
@@ -136,64 +175,75 @@ export function useVoiceActivityDetector({
         const perfNow = performance.now();
 
         // 1. BARGE-IN DETECTION (Active while AI is speaking)
-        if (isBargeInEnabledRef.current && !hasFiredBargeInRef.current) {
-          if (rms >= bargeInThreshold) {
+        if (bargeInEnabledRef.current && !hasFiredBargeInRef.current) {
+          if (rms >= bargeInThresholdRef.current) {
             if (bargeInOnsetRef.current === 0) {
               bargeInOnsetRef.current = perfNow;
-            } else if (perfNow - bargeInOnsetRef.current >= bargeInSustainMs) {
+            } else if (perfNow - bargeInOnsetRef.current >= bargeInSustainMsRef.current) {
               hasFiredBargeInRef.current = true;
               const onsetTime = bargeInOnsetRef.current;
-              console.log(`[VAD] Sustained candidate voice detected during TTS (RMS=${rms.toFixed(3)}, duration=${(perfNow - onsetTime).toFixed(1)}ms) -> Triggering Barge-In`);
-              if (onBargeIn) onBargeIn({ source: "vad_rms", rms, onsetTime, timestamp: perfNow });
-              return;
+              console.log(`[VAD] Sustained candidate voice detected during TTS (RMS=${rms.toFixed(3)}) -> Triggering Barge-In`);
+              if (onBargeInRef.current) {
+                onBargeInRef.current({ source: "vad_rms", rms, onsetTime, timestamp: perfNow });
+              }
             }
           } else {
-            // Reset onset tracker if audio drops below threshold
             bargeInOnsetRef.current = 0;
           }
         }
 
-        // 2. ANSWER COMPLETION DETECTION (Active while Candidate is answering)
-        if (isEnabledRef.current) {
+        // 2. ANSWER COMPLETION DETECTION (Active while candidate is answering)
+        if (enabledRef.current && !hasFiredCompletionRef.current) {
           const duration = now - recordingStartTimeRef.current;
           const words = lastTranscriptTextRef.current.split(/\s+/).filter(Boolean);
           const wordCount = words.length;
 
-          if (rms >= speechThreshold) {
+          if (rms >= speechThresholdRef.current) {
             lastSpeechTimeRef.current = now;
             if (!isSpeakingRef.current) {
               isSpeakingRef.current = true;
               hasSpokenRef.current = true;
               setIsSpeaking(true);
-              if (onSpeechStart) onSpeechStart();
+              if (onSpeechStartRef.current) onSpeechStartRef.current();
             }
           } else {
             if (isSpeakingRef.current) {
               isSpeakingRef.current = false;
               setIsSpeaking(false);
-              if (onSpeechEnd) onSpeechEnd();
+              if (onSpeechEndRef.current) onSpeechEndRef.current();
             }
 
             const silenceDuration = now - lastSpeechTimeRef.current;
             const transcriptSilenceDuration = now - lastTranscriptChangeTimeRef.current;
 
-            if (hasSpokenRef.current && wordCount >= minWordCount && duration >= minAnswerDurationMs) {
-              if (silenceDuration >= silenceThresholdMs && transcriptSilenceDuration >= silenceThresholdMs) {
+            // Standard Completion: 4+ words, 3s duration, 2.2s silence
+            if (hasSpokenRef.current && wordCount >= minWordCountRef.current && duration >= minAnswerDurationMsRef.current) {
+              if (silenceDuration >= silenceThresholdMsRef.current && transcriptSilenceDuration >= silenceThresholdMsRef.current) {
+                hasFiredCompletionRef.current = true;
                 console.log(`[VAD] Answer completion detected: silence=${silenceDuration}ms, words=${wordCount}, duration=${duration}ms`);
-                if (onAnswerComplete) onAnswerComplete({ reason: "silence_stable", silenceDuration, wordCount, duration });
+                if (onAnswerCompleteRef.current) {
+                  onAnswerCompleteRef.current({ reason: "silence_stable", silenceDuration, wordCount, duration });
+                }
                 return;
               }
-            } else if (hasSpokenRef.current && wordCount > 0) {
-              if (silenceDuration >= thinkingGracePeriodMs && transcriptSilenceDuration >= thinkingGracePeriodMs && duration >= minAnswerDurationMs) {
+            }
+            // Short Answer / Thinking Pause Grace Period Completion
+            else if (hasSpokenRef.current && wordCount > 0) {
+              if (silenceDuration >= thinkingGracePeriodMsRef.current && transcriptSilenceDuration >= thinkingGracePeriodMsRef.current && duration >= minAnswerDurationMsRef.current) {
+                hasFiredCompletionRef.current = true;
                 console.log(`[VAD] Short answer completion detected after thinking grace period: silence=${silenceDuration}ms, words=${wordCount}`);
-                if (onAnswerComplete) onAnswerComplete({ reason: "grace_period_complete", silenceDuration, wordCount, duration });
+                if (onAnswerCompleteRef.current) {
+                  onAnswerCompleteRef.current({ reason: "grace_period_complete", silenceDuration, wordCount, duration });
+                }
                 return;
               }
             }
           }
         }
 
-        animFrameRef.current = requestAnimationFrame(checkAudioLevel);
+        if (isAudioLoopActive) {
+          animFrameRef.current = requestAnimationFrame(checkAudioLevel);
+        }
       };
 
       animFrameRef.current = requestAnimationFrame(checkAudioLevel);
@@ -202,7 +252,8 @@ export function useVoiceActivityDetector({
     }
 
     return () => {
-      stopSession();
+      isAudioLoopActive = false;
+      if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
       if (sourceRef.current) {
         try { sourceRef.current.disconnect(); } catch (e) {}
       }
@@ -210,13 +261,12 @@ export function useVoiceActivityDetector({
         try { audioContextRef.current.close(); } catch (e) {}
       }
     };
-  }, [stream, enabled, bargeInEnabled, speechThreshold, bargeInThreshold, bargeInSustainMs, silenceThresholdMs, thinkingGracePeriodMs, minAnswerDurationMs, minWordCount, onSpeechStart, onSpeechEnd, onAnswerComplete, onBargeIn, startSession, stopSession]);
+  }, [stream, startSession]);
 
   return {
     isSpeaking,
     currentRms,
     notifyTranscriptUpdate,
     startSession,
-    stopSession,
   };
 }

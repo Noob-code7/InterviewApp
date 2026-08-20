@@ -184,6 +184,34 @@ const resolveMediaFileForAnalysis = async (mediaUrlOrKey) => {
 export const sendToAnalyzer = async (filePath, targetUrl, fieldName, referenceImagePath = null) => {
   if (!filePath) return {};
 
+  // Deterministic mock mode (CI / parity tests): exercises the full pipeline
+  // (storage resolution, concurrency, aggregation, persistence) without ML models.
+  if (process.env.MOCK_ANALYZERS === 'true') {
+    if (fieldName === 'video') {
+      return {
+        confidenceScore: 62,
+        nervousnessScore: 18,
+        attentionScore: 88,
+        eyeContactScore: 79,
+        notes: ['[mock] Face analysis placeholder'],
+        faceSubstitutionAlert: false,
+      };
+    }
+    return {
+      transcript: '',
+      confidenceScore: 78,
+      fluencyScore: 74,
+      fillerWordCount: 3,
+      speakingSpeed: 152,
+      clarityScore: 80,
+      dominantEmotion: 'neutral',
+      emotionProbabilities: {
+        neutral: 0.62, calm: 0.22, happy: 0.08, sad: 0.02,
+        angry: 0.02, fearful: 0.02, disgust: 0.01, surprised: 0.01,
+      },
+    };
+  }
+
   const formData = new FormData();
   const ext = path.extname(filePath) || ".webm";
   const filename = path.basename(filePath);
@@ -218,6 +246,28 @@ export const sendToAnalyzer = async (filePath, targetUrl, fieldName, referenceIm
 
 const sendTextToAnalyzer = async (payloadOrText, targetUrl, fallbackPrompt = "Technical Assessment") => {
   if (!payloadOrText) return {};
+
+  // Deterministic mock mode (CI / parity tests).
+  if (process.env.MOCK_ANALYZERS === 'true') {
+    const payload = typeof payloadOrText === "string" ? { text: payloadOrText } : payloadOrText;
+    const text = (payload.text || payload.transcript || "").trim();
+    const wordCount = text ? text.split(/\s+/).length : 0;
+    const base = wordCount >= 5 ? 70 : Math.max(30, 40 + wordCount * 4);
+    return {
+      relevanceScore: base,
+      correctnessScore: base - 2,
+      completenessScore: base - 4,
+      communicationScore: base + 3,
+      structureScore: base - 1,
+      grammarScore: base + 2,
+      overallScore: Math.max(30, Math.round(base - 1)),
+      feedback: "[mock] Valid response structure detected.",
+      strengths: ["[mock] Clear structure", "[mock] Relevant domain terminology"],
+      improvements: ["[mock] Add a concrete example"],
+      evaluationEngine: "mock",
+    };
+  }
+
   const payload = typeof payloadOrText === "string" ? {
     text: payloadOrText,
     transcript: payloadOrText,
@@ -578,13 +628,14 @@ export const deleteSessionMedia = async (sessionId) => {
   };
 
   for (const answer of session.answers || []) {
-    const videoGone = await deleteRef(answer.videoUrl);
-    if (videoGone && answer.videoUrl) {
+    const videoUrl = answer.videoUrl;
+    const videoGone = await deleteRef(videoUrl);
+    if (videoGone && videoUrl) {
       answer.videoUrl = "";
       deletedCount += 1;
     }
 
-    if (answer.audioUrl && answer.audioUrl !== answer.videoUrl) {
+    if (answer.audioUrl && answer.audioUrl !== videoUrl) {
       const audioGone = await deleteRef(answer.audioUrl);
       if (audioGone) {
         answer.audioUrl = "";

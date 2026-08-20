@@ -15,6 +15,9 @@ build/
 .env.local
 .env.*.local
 
+# HTTP cookie jars (curl); may accumulate session cookies over time
+cookies.txt
+
 # Logs
 *.log
 npm-debug.log*

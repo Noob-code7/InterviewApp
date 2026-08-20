@@ -90,6 +90,7 @@ export default function LiveInterviewPage() {
   const [liveTranscript, setLiveTranscript] = useState("");
   const [finalTranscript, setFinalTranscript] = useState("");
 
+  const liveTranscriptRef = useRef("");
   const timerRef = useRef(null);
   const recognizerRef = useRef(null);
   const autoStartRef = useRef(false);
@@ -99,6 +100,7 @@ export default function LiveInterviewPage() {
   const isUploadingRef = useRef(false);
   const currentQIndexRef = useRef(0);
   currentQIndexRef.current = currentQuestionIndex;
+  liveTranscriptRef.current = liveTranscript;
 
   const currentQ = questions[currentQuestionIndex];
   const displayedQuestionText = activeFollowUp?.questionText || currentQ?.questionText || "";
@@ -153,7 +155,7 @@ export default function LiveInterviewPage() {
 
     setIsRecording(false);
     clearInterval(timerRef.current);
-  }, [interviewState, liveTranscript]);
+  }, [interviewState]);
 
   // Repeat Question Handler
   const handleRepeatQuestion = useCallback(() => {
@@ -247,7 +249,7 @@ export default function LiveInterviewPage() {
       recognizerRef.current = null;
     }
 
-    const candidateQuery = liveTranscript;
+    const candidateQuery = liveTranscriptRef.current;
     setIsRecording(false);
     chunksRef.current = [];
     setLiveTranscript("");
@@ -299,7 +301,7 @@ export default function LiveInterviewPage() {
     } catch (e) {
       resumeCandidateListening();
     }
-  }, [displayedQuestionText, liveTranscript]);
+  }, [displayedQuestionText, handleStartRecording]);
 
   // Barge-In Interruption Handler
   const handleBargeInInterruption = useCallback(
@@ -378,7 +380,7 @@ export default function LiveInterviewPage() {
       vad.notifyTranscriptUpdate(liveTranscript);
 
       if (interviewState === INTERVIEW_STATES.LISTENING) {
-        const intent = classifyInterruption(liveTranscript);
+const intent = classifyInterruption(liveTranscriptRef.current);
         if (intent === INTERRUPTION_INTENTS.REPEAT_REQUEST) {
           console.log("[LiveListening] Recognized repeat question command. Triggering repeat.");
           handleRepeatQuestion();
@@ -681,6 +683,7 @@ export default function LiveInterviewPage() {
                 }
               }
               const fullText = (accumulated + " " + interim).trim();
+              liveTranscriptRef.current = fullText;
               setLiveTranscript(fullText);
             };
 
@@ -815,7 +818,7 @@ export default function LiveInterviewPage() {
       } catch (statusErr) {
         console.warn("Status update error:", statusErr);
       }
-      navigate(`/processing/${sessionId}`);
+      navigate("/interview/processing", { state: { sessionId } });
     };
 
     if (!synth) {
@@ -861,7 +864,7 @@ export default function LiveInterviewPage() {
     try {
       const blob = new Blob(chunksRef.current, { type: "video/webm" });
       const currentQ = questions[currentQIndexRef.current];
-      const currentAnswerText = liveTranscript || "";
+      const currentAnswerText = liveTranscriptRef.current || "";
 
       if (!currentQ) {
         console.warn("[InterviewEngine] No current question found during upload");
@@ -1075,7 +1078,7 @@ export default function LiveInterviewPage() {
           <h2 className="text-lg font-bold">Interview Access Alert</h2>
           <p className="text-sm text-[#6E6D68] leading-relaxed">{error}</p>
           <button
-            onClick={() => navigate("/setup")}
+            onClick={() => navigate("/interview/setup")}
             className="w-full py-3 bg-[#111110] text-white rounded-lg font-semibold text-sm hover:bg-[#2A2A28] transition-colors"
           >
             Return to Setup

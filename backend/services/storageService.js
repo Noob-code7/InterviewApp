@@ -93,13 +93,70 @@ export const storageService = {
   },
 
   /**
+   * Fetches the raw bytes of an object (Cloudflare R2 or local disk).
+   * Used by the analysis pipeline to pull remote media for face/voice/NLP.
+   */
+  getObjectBuffer: async ({ key }) => {
+    if (!isR2Configured) {
+      const basenamePath = path.join(uploadsDir, path.basename(key))
+      if (fs.existsSync(basenamePath)) {
+        return fs.readFileSync(basenamePath)
+      }
+      const relativePath = path.resolve(uploadsDir, key.replace(/^\//, ''))
+      if (fs.existsSync(relativePath)) {
+        return fs.readFileSync(relativePath)
+      }
+      throw new Error(`Local object not found: ${key}`)
+    }
+
+    const command = new GetObjectCommand({
+      Bucket: R2_BUCKET_NAME,
+      Key: key,
+    })
+
+    const response = await s3Client.send(command)
+    return Buffer.from(await response.Body.transformToByteArray())
+  },
+
+  /**
+   * Uploads raw bytes to an object (Cloudflare R2 or local disk).
+   */
+  putObjectBuffer: async ({ key, buffer, contentType = 'application/octet-stream' }) => {
+    if (!isR2Configured) {
+      const filePath = path.join(uploadsDir, key)
+      fs.mkdirSync(path.dirname(filePath), { recursive: true })
+      fs.writeFileSync(filePath, buffer)
+      return { key, url: `/uploads/${key.replace(/\\/g, '/')}` }
+    }
+
+    const command = new PutObjectCommand({
+      Bucket: R2_BUCKET_NAME,
+      Key: key,
+      Body: buffer,
+      ContentType: contentType,
+    })
+
+    await s3Client.send(command)
+    const fileUrl = R2_PUBLIC_DOMAIN
+      ? `${R2_PUBLIC_DOMAIN.replace(/\/$/, '')}/${key}`
+      : `https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com/${R2_BUCKET_NAME}/${key}`
+
+    return { key, url: fileUrl }
+  },
+
+  /**
    * Deletes an object from Cloudflare R2 or local disk storage.
    */
   deleteObject: async ({ key }) => {
     if (!isR2Configured) {
-      const localPath = path.join(uploadsDir, path.basename(key))
-      if (fs.existsSync(localPath)) {
-        fs.unlinkSync(localPath)
+      const basenamePath = path.join(uploadsDir, path.basename(key))
+      if (fs.existsSync(basenamePath)) {
+        fs.unlinkSync(basenamePath)
+        return true
+      }
+      const relativePath = path.resolve(uploadsDir, key.replace(/^\//, ''))
+      if (fs.existsSync(relativePath)) {
+        fs.unlinkSync(relativePath)
       }
       return true
     }

@@ -1,4 +1,7 @@
 import 'dotenv/config';
+// Deterministic pipeline mode: no ML models required, still exercises
+// storage resolution, concurrency, aggregation, and persistence for real.
+process.env.MOCK_ANALYZERS = 'true';
 import mongoose from 'mongoose';
 import axios from 'axios';
 import fs from 'fs';
@@ -31,7 +34,7 @@ async function runParityVerification() {
   const headers = { Authorization: `Bearer ${token}` };
 
   console.log('========================================================================');
-  console.log('🧪 PRODUCTION VERIFICATION & SCORE PARITY TEST');
+  console.log('🧪 PRODUCTION VERIFICATION & SCORE PARITY TEST (MOCK_ANALYZERS=on)');
   console.log('========================================================================\n');
 
   const fixtureFiles = [
@@ -67,12 +70,29 @@ async function runParityVerification() {
   const session = createRes.data.data.session;
   const sessionId = session._id;
 
+  // Stage fixtures under session-unique names so concurrent analysis of other
+  // sessions (e.g. backend recovery re-queues) can never collide with this run's
+  // media files in the shared uploads dir.
+  const uploadsDir = path.resolve(__dirname, '../uploads');
+  fs.mkdirSync(uploadsDir, { recursive: true });
+  const stagedFiles = [];
+  for (let i = 0; i < fixtureFiles.length; i++) {
+    const uniqueName = `test_candidate_${sessionId}_q${i + 1}.webm`;
+    fs.copyFileSync(fixtureFiles[i], path.join(uploadsDir, uniqueName));
+    stagedFiles.push(uniqueName);
+  }
+
   // 2. Generate 5 Questions
   const qRes = await axios.post(`${API_BASE}/sessions/${sessionId}/questions`, {}, { headers });
   const questions = qRes.data.data.questions || qRes.data.data.session.answers;
 
   // 3. Attach writing & answers
-  await axios.post(`${API_BASE}/sessions/${sessionId}/writing`, { text: writingSample }, { headers });
+  // Direct DB write (not POST /writing) so the controller's auto-triggered
+  // background analysis doesn't race with the direct processSession below.
+  await Session.updateOne(
+    { _id: sessionId },
+    { writingSubmission: writingSample, includeWritingTest: true }
+  );
 
   for (let i = 0; i < 5; i++) {
     const q = questions[i];
@@ -80,7 +100,7 @@ async function runParityVerification() {
     await axios.post(
       `${API_BASE}/sessions/${sessionId}/answers/${q.questionId}`,
       {
-        videoUrl: `/uploads/${path.basename(fixFile)}`,
+        videoUrl: `/uploads/${stagedFiles[i]}`,
         questionIndex: i,
         questionText: q.questionText,
       },
@@ -132,6 +152,22 @@ async function runParityVerification() {
   }
   if (!report.detailedScores) {
     throw new Error('Detailed scores breakdown missing');
+  }
+  const ds = report.detailedScores;
+  if (!(ds.nlpVerbalScore > 0)) {
+    throw new Error('nlpVerbalScore is 0 — NLP evaluation did not run');
+  }
+  if (!(ds.voiceSerScore > 0)) {
+    throw new Error('voiceSerScore is 0 — voice analysis did not run');
+  }
+  if (!(ds.faceVisualScore > 0)) {
+    throw new Error('faceVisualScore is 0 — face analysis did not run');
+  }
+  if (!(ds.writingTestScore > 0)) {
+    throw new Error('writingTestScore is 0 — writing analysis did not run');
+  }
+  if (!(report.overallScore > 0)) {
+    throw new Error('overallScore is 0 — aggregation did not produce a score');
   }
 
   console.log('\n========================================================================');
