@@ -6,6 +6,7 @@ import { analysisApi } from "../api/analysis.js";
 import { Button, Card } from "../components/ui/index.js";
 import LiveAudioVisualizer from "../components/ui/LiveAudioVisualizer.jsx";
 import { useVoiceActivityDetector } from "../hooks/useVoiceActivityDetector.js";
+import { speak, cancelTTS, preSynthesize } from "../utils/ttsService.js";
 import {
   INTERVIEW_GREETINGS,
   GREETING_ACKNOWLEDGEMENTS,
@@ -188,8 +189,6 @@ export default function LiveInterviewPage() {
     setInterviewState(INTERVIEW_STATES.REPEAT_ACK_SPEAKING);
     setAiSpeaking(true);
 
-    const synth = window.speechSynthesis;
-
     const resumeQuestionTTS = () => {
       setTimeout(() => {
         setAiSpeaking(false);
@@ -197,38 +196,7 @@ export default function LiveInterviewPage() {
       }, 400);
     };
 
-    if (!synth) {
-      resumeQuestionTTS();
-      return;
-    }
-
-    try {
-      synth.cancel();
-      const utterance = new SpeechSynthesisUtterance(chosenAck);
-      utterance.rate = 1.05;
-      utterance.pitch = 1.0;
-
-      const voices = synth.getVoices();
-      const englishVoice = voices.find(
-        (v) =>
-          v.lang.startsWith("en") &&
-          (v.name.includes("Google") ||
-            v.name.includes("Natural") ||
-            v.name.includes("Samantha"))
-      );
-      if (englishVoice) utterance.voice = englishVoice;
-
-      utterance.onend = () => {
-        resumeQuestionTTS();
-      };
-      utterance.onerror = () => {
-        resumeQuestionTTS();
-      };
-
-      synth.speak(utterance);
-    } catch (e) {
-      resumeQuestionTTS();
-    }
+    speak(chosenAck).then(resumeQuestionTTS);
   }, []);
 
   // Clarification Request Handler
@@ -261,8 +229,6 @@ export default function LiveInterviewPage() {
     setInterviewState(INTERVIEW_STATES.CLARIFICATION_SPEAKING);
     setAiSpeaking(true);
 
-    const synth = window.speechSynthesis;
-
     const resumeCandidateListening = () => {
       setTimeout(() => {
         setAiSpeaking(false);
@@ -270,45 +236,14 @@ export default function LiveInterviewPage() {
       }, 400);
     };
 
-    if (!synth) {
-      resumeCandidateListening();
-      return;
-    }
-
-    try {
-      synth.cancel();
-      const utterance = new SpeechSynthesisUtterance(response);
-      utterance.rate = 1.05;
-      utterance.pitch = 1.0;
-
-      const voices = synth.getVoices();
-      const englishVoice = voices.find(
-        (v) =>
-          v.lang.startsWith("en") &&
-          (v.name.includes("Google") ||
-            v.name.includes("Natural") ||
-            v.name.includes("Samantha"))
-      );
-      if (englishVoice) utterance.voice = englishVoice;
-
-      utterance.onend = () => {
-        resumeCandidateListening();
-      };
-      utterance.onerror = () => {
-        resumeCandidateListening();
-      };
-
-      synth.speak(utterance);
-    } catch (e) {
-      resumeCandidateListening();
-    }
+    speak(response).then(resumeCandidateListening);
   }, [displayedQuestionText]);
 
   // Barge-In Interruption Handler
   const handleBargeInInterruption = useCallback(
     ({ source, text, onsetTime, timestamp }) => {
       try {
-        window.speechSynthesis?.cancel();
+        cancelTTS();
       } catch (e) {}
       const tCompleted = performance.now();
       const referenceOnset = onsetTime || timestamp || tCompleted;
@@ -417,44 +352,12 @@ const intent = classifyInterruption(liveTranscriptRef.current);
     setInterviewState(INTERVIEW_STATES.GREETING_ACK);
 
     const ackPhrase = getRandomItem(GREETING_ACKNOWLEDGEMENTS);
-    const synth = window.speechSynthesis;
 
-    if (!synth) {
+    speak(ackPhrase).then(() => {
       setTimeout(() => {
         setInterviewState(INTERVIEW_STATES.AI_SPEAKING);
-      }, 1000);
-      return;
-    }
-
-    try {
-      synth.cancel();
-      const utterance = new SpeechSynthesisUtterance(ackPhrase);
-      utterance.rate = 1.0;
-      utterance.pitch = 1.0;
-
-      const voices = synth.getVoices();
-      const englishVoice = voices.find(
-        (v) =>
-          v.lang.startsWith("en") &&
-          (v.name.includes("Google") ||
-            v.name.includes("Natural") ||
-            v.name.includes("Samantha"))
-      );
-      if (englishVoice) utterance.voice = englishVoice;
-
-      utterance.onend = () => {
-        setTimeout(() => {
-          setInterviewState(INTERVIEW_STATES.AI_SPEAKING);
-        }, 400);
-      };
-      utterance.onerror = () => {
-        setInterviewState(INTERVIEW_STATES.AI_SPEAKING);
-      };
-
-      synth.speak(utterance);
-    } catch (e) {
-      setInterviewState(INTERVIEW_STATES.AI_SPEAKING);
-    }
+      }, 400);
+    });
   }, []);
 
   // Initialize Session and Fetch Questions
@@ -492,12 +395,20 @@ const intent = classifyInterruption(liveTranscriptRef.current);
           return;
         }
 
+        const chosenGreeting = getRandomItem(INTERVIEW_GREETINGS);
         if (isMounted) {
           setQuestions(fetchedQuestions);
-          const chosenGreeting = getRandomItem(INTERVIEW_GREETINGS);
           setGreetingText(chosenGreeting);
           setLoading(false);
         }
+
+        preSynthesize(chosenGreeting);
+        [
+          ...GREETING_ACKNOWLEDGEMENTS,
+          ...QUESTION_TRANSITIONS,
+          ...REPEAT_ACKNOWLEDGEMENTS,
+          ...CLOSING_STATEMENTS,
+        ].forEach((phrase) => preSynthesize(phrase));
 
         await startCamera();
       } catch (err) {
@@ -520,9 +431,7 @@ const intent = classifyInterruption(liveTranscriptRef.current);
       stopCamera();
       clearInterval(timerRef.current);
       if (greetingTimeoutRef.current) clearTimeout(greetingTimeoutRef.current);
-      try {
-        window.speechSynthesis?.cancel();
-      } catch (e) {}
+      cancelTTS();
     };
   }, [sessionId, navigate]);
 
@@ -565,7 +474,6 @@ const intent = classifyInterruption(liveTranscriptRef.current);
     setInterviewState(INTERVIEW_STATES.GREETING_SPEAKING);
     setAiSpeaking(true);
 
-    const synth = window.speechSynthesis;
     let fallbackTimeout;
 
     const startGreetingListening = () => {
@@ -580,45 +488,14 @@ const intent = classifyInterruption(liveTranscriptRef.current);
       }, 4500);
     };
 
-    if (!synth) {
-      fallbackTimeout = setTimeout(startGreetingListening, 2000);
-      return;
-    }
-
-    try {
-      synth.cancel();
-      const utterance = new SpeechSynthesisUtterance(greetingText);
-      utterance.rate = 1.0;
-      utterance.pitch = 1.0;
-
-      const voices = synth.getVoices();
-      const englishVoice = voices.find(
-        (v) =>
-          v.lang.startsWith("en") &&
-          (v.name.includes("Google") ||
-            v.name.includes("Natural") ||
-            v.name.includes("Samantha"))
-      );
-      if (englishVoice) utterance.voice = englishVoice;
-
-      utterance.onend = () => {
-        startGreetingListening();
-      };
-      utterance.onerror = () => {
-        startGreetingListening();
-      };
-
-      synth.speak(utterance);
-      fallbackTimeout = setTimeout(startGreetingListening, 8000);
-    } catch (e) {
-      fallbackTimeout = setTimeout(startGreetingListening, 1500);
-    }
+    speak(greetingText)
+      .then(startGreetingListening)
+      .catch(startGreetingListening);
+    fallbackTimeout = setTimeout(startGreetingListening, 12000);
 
     return () => {
       clearTimeout(fallbackTimeout);
-      try {
-        synth?.cancel();
-      } catch (e) {}
+      cancelTTS();
     };
   }, [loading, greetingText, hasCompletedGreeting, interviewState, transitionFromGreetingToQ1]);
 
@@ -751,8 +628,6 @@ const intent = classifyInterruption(liveTranscriptRef.current);
       setInterviewState(INTERVIEW_STATES.TRANSITION_SPEAKING);
       setAiSpeaking(true);
 
-      const synth = window.speechSynthesis;
-
       const proceedToNextQuestion = () => {
         setTimeout(() => {
           setAiSpeaking(false);
@@ -766,38 +641,9 @@ const intent = classifyInterruption(liveTranscriptRef.current);
         }, 500);
       };
 
-      if (!synth) {
-        proceedToNextQuestion();
-        return;
-      }
-
-      try {
-        synth.cancel();
-        const utterance = new SpeechSynthesisUtterance(chosenTransition);
-        utterance.rate = 1.05;
-        utterance.pitch = 1.0;
-
-        const voices = synth.getVoices();
-        const englishVoice = voices.find(
-          (v) =>
-            v.lang.startsWith("en") &&
-            (v.name.includes("Google") ||
-              v.name.includes("Natural") ||
-              v.name.includes("Samantha"))
-      );
-      if (englishVoice) utterance.voice = englishVoice;
-
-        utterance.onend = () => {
-          proceedToNextQuestion();
-        };
-        utterance.onerror = () => {
-          proceedToNextQuestion();
-        };
-
-        synth.speak(utterance);
-      } catch (e) {
-        proceedToNextQuestion();
-      }
+      speak(chosenTransition)
+        .then(proceedToNextQuestion)
+        .catch(proceedToNextQuestion);
     },
     []
   );
@@ -809,8 +655,6 @@ const intent = classifyInterruption(liveTranscriptRef.current);
     setClosingText(chosenClosing);
     setInterviewState(INTERVIEW_STATES.CLOSING_SPEAKING);
     setAiSpeaking(true);
-
-    const synth = window.speechSynthesis;
 
     const finalizeAndNavigate = async () => {
       setAiSpeaking(false);
@@ -824,38 +668,9 @@ const intent = classifyInterruption(liveTranscriptRef.current);
       navigate("/interview/processing", { state: { sessionId } });
     };
 
-    if (!synth) {
-      setTimeout(finalizeAndNavigate, 1500);
-      return;
-    }
-
-    try {
-      synth.cancel();
-      const utterance = new SpeechSynthesisUtterance(chosenClosing);
-      utterance.rate = 1.0;
-      utterance.pitch = 1.0;
-
-      const voices = synth.getVoices();
-      const englishVoice = voices.find(
-        (v) =>
-          v.lang.startsWith("en") &&
-          (v.name.includes("Google") ||
-            v.name.includes("Natural") ||
-            v.name.includes("Samantha"))
-      );
-      if (englishVoice) utterance.voice = englishVoice;
-
-      utterance.onend = () => {
-        finalizeAndNavigate();
-      };
-      utterance.onerror = () => {
-        finalizeAndNavigate();
-      };
-
-      synth.speak(utterance);
-    } catch (e) {
-      finalizeAndNavigate();
-    }
+    speak(chosenClosing)
+      .then(finalizeAndNavigate)
+      .catch(finalizeAndNavigate);
   }, [sessionId, navigate]);
 
   // Handle Answer Upload & Automatic Progression
@@ -992,7 +807,6 @@ const intent = classifyInterruption(liveTranscriptRef.current);
     autoStartRef.current = false;
     setAiSpeaking(true);
 
-    const synth = window.speechSynthesis;
     let fallbackTimeout;
     let retryStreamInterval;
 
@@ -1011,47 +825,15 @@ const intent = classifyInterruption(liveTranscriptRef.current);
       setTimeout(attemptStart, 400);
     };
 
-    if (!synth) {
-      fallbackTimeout = setTimeout(autoStartRecordingWhenReady, 2000);
-      return;
-    }
-
-    try {
-      synth.cancel();
-      const utterance = new SpeechSynthesisUtterance(displayedQuestionText);
-      utterance.rate = 1.0;
-      utterance.pitch = 1.0;
-
-      const voices = synth.getVoices();
-      const englishVoice = voices.find(
-        (v) =>
-          v.lang.startsWith("en") &&
-          (v.name.includes("Google") ||
-            v.name.includes("Natural") ||
-            v.name.includes("Samantha"))
-      );
-      if (englishVoice) utterance.voice = englishVoice;
-
-      utterance.onend = () => {
-        autoStartRecordingWhenReady();
-      };
-
-      utterance.onerror = () => {
-        autoStartRecordingWhenReady();
-      };
-
-      synth.speak(utterance);
-      fallbackTimeout = setTimeout(autoStartRecordingWhenReady, 12000);
-    } catch (e) {
-      fallbackTimeout = setTimeout(autoStartRecordingWhenReady, 1500);
-    }
+    speak(displayedQuestionText)
+      .then(autoStartRecordingWhenReady)
+      .catch(autoStartRecordingWhenReady);
+    fallbackTimeout = setTimeout(autoStartRecordingWhenReady, 12000);
 
     return () => {
       clearTimeout(fallbackTimeout);
       clearTimeout(retryStreamInterval);
-      try {
-        synth?.cancel();
-      } catch (e) {}
+      cancelTTS();
     };
   }, [displayedQuestionText, loading, currentQuestionIndex, handleStartRecording, hasCompletedGreeting, interviewState]);
 
