@@ -10,6 +10,9 @@ RUN apt-get update && apt-get install -y \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Pre-download DeepFace emotion and VGG-Face model weights into /root/.deepface/
+RUN python -c "from deepface import DeepFace; DeepFace.build_model('Emotion'); DeepFace.build_model('VGG-Face')"
+
 COPY . .
 
 EXPOSE 8001

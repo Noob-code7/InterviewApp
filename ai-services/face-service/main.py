@@ -20,6 +20,16 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+@app.on_event("startup")
+async def warmup_models():
+    """Eagerly load DeepFace models into RAM on server boot to eliminate first-request latency."""
+    try:
+        DeepFace.build_model("Emotion")
+        DeepFace.build_model("VGG-Face")
+        print("[Face Service] DeepFace Emotion & VGG-Face models pre-loaded into RAM successfully.")
+    except Exception as e:
+        print(f"[Face Service Warmup Warning] Could not pre-warm models: {e}")
+
 
 class FaceAnalysisResult(BaseModel):
     confidenceScore: float
