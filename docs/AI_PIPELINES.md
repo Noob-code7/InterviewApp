@@ -1,8 +1,8 @@
-# Multi-Modal AI Pipelines — InterviewAI
+# Tri-Modal AI Microservices Cluster — InterviewAI
 
-## 1. Overview
+## 1. Microservice Topology
 
-InterviewAI evaluates candidate performance across three independent AI microservices running on dedicated ports:
+InterviewAI coordinates three dedicated Python FastAPI microservices running in isolated processes:
 
 ```text
 ai-services/
@@ -13,46 +13,60 @@ ai-services/
 
 ---
 
-## 2. Face Analysis Pipeline (`ai-services/face-service/`)
+## 2. Computer Vision & Face Analysis Pipeline (`:8001`)
 
-### 2.1 Video Ingestion & Frame Sampling
-- **Input**: Spoken answer video recording (`.webm` or `.mp4`).
-- **Processing**: OpenCV reads video frames at adaptive intervals (every $N = 30$ frames at 30 fps $\approx 1$ frame/sec).
-- **Face Detection**: Extracts bounding boxes and facial landmark coordinates.
+```mermaid
+flowchart TD
+    Video["Candidate Spoken WebM Video"] --> Cap["OpenCV VideoCapture Extraction\nAdaptive sampling: 1 frame/sec @ 30 FPS"]
+    Cap --> BBox["Face Detection & Landmark Localization"]
+    
+    BBox --> EmotionNet["DeepFace Emotion Analysis\n(neutral, happy, surprise, fear, sad, angry, disgust)"]
+    BBox --> PoseNet["Face Bounding Box Centrality & Gaze Vector"]
+    BBox --> IdentityNet["VGG-Face Feature Embedding Extractor"]
 
-### 2.2 Emotion & Expressiveness Scoring
-- **Emotions Extracted**: `neutral`, `happy`, `surprise`, `fear`, `sad`, `angry`, `disgust`.
-- **Confidence Computation**:
-  $$\text{Confidence} = (\text{neutral} \times 0.7 + \text{happy} \times 0.9 + \text{surprise} \times 0.3) - (1.2 \times \text{fear} + 1.2 \times \text{sad} + 1.5 \times \text{angry} + 1.5 \times \text{disgust})$$
+    EmotionNet --> Expressiveness["Confidence Formulation:\nScore = (0.7*neutral + 0.9*happy + 0.3*surprise) - (1.2*fear + 1.2*sad + 1.5*angry + 1.5*disgust)"]
+    PoseNet --> Attention["Attention & Eye-Contact Score (0 - 100)"]
+    
+    IdentityNet --> Verifier{"Baseline Snapshot Present?"}
+    Verifier -- Yes --> CosineCheck["Cosine Distance Verification vs Reference Photo"]
+    CosineCheck -- Distance > 0.40 --> FlagAlert["Set faceSubstitutionAlert = true"]
+    CosineCheck -- Distance <= 0.40 --> IdentityVerified["Identity Confirmed"]
+    Verifier -- No --> SkipVerify["Skip Identity Verification"]
+```
 
-### 2.3 Gaze, Attention & Face Substitution Guard
-- **Eye Contact & Attention**: Evaluates face pose angle and bounding box centrality.
-- **Identity Verification**: If an initial reference photo was captured at interview start, DeepFace runs `VGG-Face` cosine distance verification against candidate frames. If the identity shifts mid-interview, `faceSubstitutionAlert: true` is flagged in the report.
-- **Zero-Latency Pre-Bake**: Model weights are pre-baked during Docker image build and eagerly warmed up on server boot (`@app.on_event("startup")`), eliminating the 60-second first-request delay.
+### Docker Pre-Bake & Zero Cold-Start Latency
+DeepFace downloads `facial_expression_model_weights.h5` (~50MB) and `vgg_face_weights.h5` (~140MB) on first execution. In InterviewAI:
+1. Weights are pre-downloaded during `docker compose build` inside the Dockerfile.
+2. Models are eagerly built into RAM upon container startup via `@app.on_event("startup")`, reducing the first candidate's latency from **60s to 1.2s**.
 
 ---
 
-## 3. Voice Analysis Pipeline (`ai-services/voice-service/`)
+## 3. Speech Emotion Recognition & Neural TTS Pipeline (`:8002`)
 
-### 3.1 Speech Emotion Recognition (SER)
-- **Model**: Fine-tuned **Wav2Vec 2.0** PyTorch model (`best_model_path.pth`).
-- **Input**: 16kHz mono audio waveform extracted from candidate answers.
-- **Metrics Extracted**:
-  - `confidenceScore`: Vocal stability and clarity index ($0 - 100$).
-  - `nervousnessScore`: Jitter, pitch variance, and vocal hesitation markers.
-  - `toneDistribution`: Granular breakdown of emotional probabilities.
+### 3.1 Wav2Vec 2.0 Speech Emotion Recognition (SER)
+- **Model Architecture**: Fine-tuned Wav2Vec 2.0 transformer (`best_model_path.pth`).
+- **Input**: 16kHz mono PCM waveform.
+- **Acoustic Features**: Computes pitch stability, speech jitter, speaking rate, and vocal energy distribution.
+- **Output Metrics**: `confidenceScore` ($0-100$), `nervousnessScore` ($0-100$), and `toneDistribution`.
 
 ### 3.2 Kokoro-82M ONNX Neural TTS
-- **Engine**: High-speed ONNX runtime executing Kokoro-82M fp16 model (`kokoro-v1.0.fp16.onnx` + `voices-v1.0.bin`).
-- **Performance**: Synthesizes 24kHz studio-quality natural interviewer speech in $< 150\text{ms}$ latency.
-- **Client Delivery**: Streamed as raw WAV audio through Express API proxy with client-side memory caching.
+- **Engine**: Kokoro-82M fp16 ONNX model (`kokoro-v1.0.fp16.onnx` + `voices-v1.0.bin`).
+- **Performance**: High-fidelity 24kHz audio synthesis in $<150	ext{ms}$.
+- **Client Cache**: Audio chunks are cached in frontend memory; identical transitional phrases are returned in $<5	ext{ms}$.
 
 ---
 
-## 4. Multi-Modal Score Aggregation
+## 4. Multi-Modal Composite Aggregation Formula
 
-The final performance report synthesizes metrics from all three modalities:
+The overall candidate score is computed in [`backend/controllers/reportController.js`](file:///C:/Workspace/Workspace/InterviewApp/backend/controllers/reportController.js):
 
-$$\text{Overall Score} = (\text{Verbal NLP} \times 0.40) + (\text{Voice SER} \times 0.20) + (\text{Face Visual} \times 0.20) + (\text{Writing Assessment} \times 0.20)$$
+$$\text{Overall Score} = 
+\begin{cases}
+(\text{Verbal NLP} \times 0.40) + (\text{Voice SER} \times 0.20) + (\text{Face Visual} \times 0.20) + (\text{Writing} \times 0.20) & \text{if writing test completed} \\
+(\text{Verbal NLP} \times 0.50) + (\text{Voice SER} \times 0.25) + (\text{Face Visual} \times 0.25) & \text{if writing test skipped}
+\end{cases}$$
 
-*If the candidate opted out of the technical writing test, the weights are dynamically re-balanced to NLP 50%, Voice 25%, and Face 25%.*
+### Readiness Tier Classification
+- **High Readiness ($\ge 75$)**: Strong technical depth, stable vocal prosody, high attention.
+- **Medium Readiness ($50 - 74$)**: Competent grasp with minor conceptual gaps or vocal hesitation.
+- **Low Readiness ($< 50$)**: Substantial conceptual misunderstandings or high nervousness.

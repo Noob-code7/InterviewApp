@@ -1,21 +1,27 @@
-# InterviewAI — Autonomous Multi-Modal AI Interview Platform
+# InterviewAI — Autonomous Multi-Modal AI Interview & Analytics Platform
 
 <p align="center">
   <img src="https://img.shields.io/badge/React-18-blue?logo=react" alt="React 18" />
   <img src="https://img.shields.io/badge/Node.js-Express-green?logo=node.js" alt="Node Express" />
   <img src="https://img.shields.io/badge/Python-FastAPI-teal?logo=fastapi" alt="FastAPI" />
-  <img src="https://img.shields.io/badge/AI-DeepFace%20%7C%20Wav2Vec%202.0%20%7C%20Kokoro--82M-orange" alt="AI Models" />
-  <img src="https://img.shields.io/badge/Storage-Cloudflare%20R2%20%2F%20S3-purple" alt="Cloudflare R2" />
-  <img src="https://img.shields.io/badge/Docker-Compose%20Ready-blue" alt="Docker Ready" />
+  <img src="https://img.shields.io/badge/Vision-DeepFace%20%7C%20OpenCV-red" alt="Vision" />
+  <img src="https://img.shields.io/badge/Speech-Wav2Vec%202.0%20%7C%20Kokoro--82M-orange" alt="Speech" />
+  <img src="https://img.shields.io/badge/Storage-Cloudflare%20R2%20%2F%20S3-purple" alt="Storage" />
+  <img src="https://img.shields.io/badge/Deployment-Docker%20%26%20Campus%20LAN%20PM2-blueviolet" alt="Deployment" />
 </p>
 
 ---
 
-## 💡 What is InterviewAI?
+## 💡 Executive Summary
 
-**InterviewAI** is a real-time, autonomous AI interview simulator and evaluation platform. Unlike conventional quiz applications that rely on manual button clicks, InterviewAI delivers an **organic, conversational interview experience**. 
+**InterviewAI** is an autonomous, multi-modal artificial intelligence interview platform engineered to simulate a live, highly competent technical interviewer. 
 
-The AI greets the candidate, speaks questions aloud with studio-quality neural voices, continuously monitors for candidate speech, **yields immediately when interrupted (barge-in)**, detects answer completion through silence analysis, and automatically progresses through the interview. Upon completion, a parallelized multi-modal AI cluster evaluates the candidate across **facial dynamics**, **vocal prosody (speech emotion)**, **conceptual technical accuracy**, and **written coding solutions**.
+Unlike standard web interview applications that operate as turn-based quizzes (*"Click Record"*, *"Click Next"*), InterviewAI implements an **autonomous conversational state machine**:
+1. The AI interviewer delivers greetings and questions aloud using ultra-fast neural speech synthesis.
+2. The browser continuously runs client-side **Voice Activity Detection (VAD)**.
+3. If the candidate speaks or interrupts mid-question, the AI **yields instantly (<150ms barge-in)**, cancels audio playback, and transitions to answer recording.
+4. When the candidate pauses for $> 2.2\text{s}$, the system finalizes the answer, uploads the video/audio stream, and dynamically delivers conversational transition phrases.
+5. Upon session completion, a parallelized Python AI cluster evaluates the candidate across **facial emotion and attention (DeepFace)**, **vocal prosody and confidence (Wav2Vec 2.0)**, and **conceptual correctness (calibrated local NLP)**.
 
 ```markdown
 <!-- 📸 SCREENSHOT PLACEHOLDER: Hero / Live AI Interview Interface -->
@@ -23,13 +29,13 @@ The AI greets the candidate, speaks questions aloud with studio-quality neural v
 
 ---
 
-## ⚡ Why InterviewAI? (Key Technical Differentiators)
+## ⚡ Key Technical Innovations
 
-| Feature | Typical Interview Practice Apps | InterviewAI |
+| Engineering Dimension | Traditional Interview Apps | InterviewAI Autonomous Architecture |
 | :--- | :--- | :--- |
-| **Conversational Flow** | Turn-based buttons (*"Click Record"*, *"Click Next"*) | **Continuous, autonomous state machine with natural transitions** |
-| **Candidate Interruption** | Impossible; audio plays to completion | **Real-time Acoustic/Speech hybrid VAD barge-in (<150ms)** |
-| **NLP Answer Scoring** | Generic LLM prompt (*"Rate 1-10"*) prone to score inflation | **Deterministic local NLP engine with strict correctness floor gating** |
+| **Conversational Flow** | Turn-based buttons (*"Click Start"*, *"Click Stop"*) | **Autonomous single-owner FSM with natural speech transitions** |
+| **Barge-In / Interruption** | Impossible; audio must finish playing | **Real-time Acoustic + Speech hybrid VAD interruption (<150ms)** |
+| **NLP Answer Scoring** | Generic LLM prompt (*"Rate 1-10"*) prone to severe score inflation | **Deterministic local NLP engine with strict correctness floor gating** |
 | **Multi-Modal Analytics** | Text-only or superficial keyword checks | **Tri-modal AI: Facial expression (DeepFace), Vocal emotion (Wav2Vec 2.0), & NLP** |
 | **Question Bank** | Generic 10–20 static questions | **285-question dataset with per-user repetition tracking (`QuestionHistory`)** |
 | **Resume Intelligence** | Manual topic selection | **PDF/DOCX parsing with deep-dive architectural question synthesis** |
@@ -41,19 +47,19 @@ The AI greets the candidate, speaks questions aloud with studio-quality neural v
 
 ```mermaid
 flowchart TD
-    Setup["1. Candidate Setup & Track Selection\n(Technical, Mixed, Resume-Based, Writing Opt-In)"] --> Live["2. Live Interview Interface"]
-    Live --> Greeting["3. Natural AI Spoken Greeting"]
+    Setup["1. Candidate Setup & Track Customization\n(Technical Subject, Mixed HR/Tech, Resume-Based, Writing Opt-In)"] --> Live["2. Live Interview Room"]
+    Live --> Greeting["3. AI Articulates Natural Spoken Greeting"]
     
-    Greeting --> Question["4. AI Reads Question Aloud (Kokoro-82M Neural TTS)"]
-    Question --> CandidateSpeaking{"5. Candidate Interacts"}
+    Greeting --> Question["4. AI Reads Technical Question Prompt (Kokoro-82M Neural TTS)"]
+    Question --> CandidateSpeaking{"5. Candidate Interaction"}
     
-    CandidateSpeaking -- "Speaks Directly" --> Listening["6. VAD Active Listening & Live Transcription"]
-    CandidateSpeaking -- "Interrupts Mid-Question" --> BargeIn["6b. Instant Barge-In (<150ms):\nCancel TTS -> Switch to Answer Recording"]
+    CandidateSpeaking -- "Speaks Directly" --> Listening["6. Active Listening & Live Transcription"]
+    CandidateSpeaking -- "Interrupts Mid-Question" --> BargeIn["6b. Instant Barge-In (<150ms):\nCancel TTS -> Invalidate Gen ID -> Start Recording"]
     
     BargeIn --> Listening
-    Listening --> Silence{"7. Silence > 2.2s?"}
+    Listening --> Silence{"7. Silence > 2.2s Detected?"}
     
-    Silence -- Yes --> CompleteAnswer["8. Auto-Finalize Answer & Stream WebM Media"]
+    Silence -- Yes --> CompleteAnswer["8. Auto-Finalize Answer & Stream WebM to Storage"]
     CompleteAnswer --> Transition["9. Conversational Transition Phrase"]
     
     Transition --> CheckMore{"More Questions?"}
@@ -143,8 +149,8 @@ flowchart TD
 
 ## 🧠 Core Subsystem Deep-Dives
 
-### 1. The Autonomous Conversational State Machine
-Implemented as an explicit single-owner state machine in [`frontend/src/pages/LiveInterviewPage.jsx`](file:///C:/Workspace/Workspace/InterviewApp/frontend/src/pages/LiveInterviewPage.jsx). Uses an atomic `generationIdRef` counter to eliminate asynchronous audio race conditions and stale callback executions when audio is cancelled mid-sentence.
+### 1. Autonomous Conversational Engine & State Machine
+Managed by an explicit single-owner state machine in [`frontend/src/pages/LiveInterviewPage.jsx`](file:///C:/Workspace/Workspace/InterviewApp/frontend/src/pages/LiveInterviewPage.jsx). Uses an atomic `generationIdRef` counter to eliminate asynchronous audio race conditions and stale callback executions when audio is cancelled mid-sentence.
 
 ### 2. Calibrated Local NLP Answer Evaluator (0% Score Inflation Guarantee)
 Located in [`ai-services/nlp-service/main.py`](file:///C:/Workspace/Workspace/InterviewApp/ai-services/nlp-service/main.py), the engine evaluates semantic coverage across technical keyword stems and multi-word concept sentences. Strict correctness floor gating guarantees that fluent but incorrect answers, prompt echoes, and buzzword dumps receive genuine failing scores ($\le 20\%$).
@@ -196,7 +202,7 @@ Access the application at `http://localhost:5173`.
 
 ---
 
-## 📚 Complete Technical Documentation
+## 📚 Complete Technical Documentation Suite
 
 | Document | Description |
 | :--- | :--- |
@@ -206,7 +212,7 @@ Access the application at `http://localhost:5173`.
 | 👁️ [Multi-Modal AI Pipelines](docs/AI_PIPELINES.md) | DeepFace vision pipeline, Wav2Vec 2.0 SER, and Kokoro-82M ONNX TTS |
 | 📄 [Resume Intelligence](docs/RESUME_INTELLIGENCE.md) | PDF/DOCX document parsing and personalized question synthesis |
 | 📦 [Storage & Media](docs/STORAGE_AND_MEDIA.md) | Cloudflare R2 / S3 abstraction, local disk fallback, and ephemeral cleanup |
-| 🧪 [Testing & Verification](docs/TESTING_AND_VERIFICATION.md) | Automated regression suites, score parity tests, and physical acoustic checklist |
+| 🧪 [Testing & Verification](docs/TESTING_AND_VERIFICATION.md) | Automated regression matrix, parity tests, and physical acoustic checklist |
 | 🚢 [Deployment Guide](docs/DEPLOYMENT.md) | Cloud VPS (Docker Compose) vs Campus LAN Self-Hosted (PM2 + SPA Serving) |
 | 🔌 [REST API Specification](docs/API.md) | Endpoint specifications for Auth, Sessions, Storage, Analysis, and TTS |
 

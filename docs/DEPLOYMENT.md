@@ -1,4 +1,4 @@
-# Deployment Architecture & Operations — InterviewAI
+# Dual-Target Deployment Architecture — InterviewAI
 
 InterviewAI features a **dual-deployment architecture**:
 1. **Cloud Deployment (Docker Compose / VPS)** for scalable internet-facing deployments.

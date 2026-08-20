@@ -1,82 +1,100 @@
-# Local NLP Evaluation Engine — InterviewAI
+# Calibrated Local NLP Answer Evaluation Engine — InterviewAI
 
-## 1. Why a Deterministic Local NLP Engine?
+## 1. The Critical Failure of Generic LLM Scoring
 
-Standard AI interview apps make an expensive, non-deterministic call to a public LLM (e.g., GPT-4) with a generic prompt like: *"Score this answer from 1 to 10."*
+Commercial LLMs (e.g. GPT-4, Claude) suffer from **severe score inflation** when evaluating technical interviews:
+- **Politeness Bias**: If a candidate speaks fluently using polished English, LLMs consistently award $70 - 85\%$ even when the core technical statement is 100% false (e.g. claiming *"UDP is connection-oriented"*).
+- **Latency Spikes**: 3–8 second network calls per question degrade candidate experience and lead to gateway timeouts.
+- **Campus Incompatibility**: Many university computer labs operate behind air-gapped firewalls with zero external cloud connectivity.
 
-This approach has severe fatal flaws in production:
-1. **Score Inflation**: LLMs are overly polite; fluent English with completely wrong computer science facts routinely scores 70–85%.
-2. **High Latency**: 3–8 second roundtrip times per question delay report generation.
-3. **Campus / Offline Incompatibility**: Does not work on private, air-gapped university LANs.
-4. **Vulnerability to Adversarial Answers**: Sarcastic remarks, buzzword lists, and parroting the question prompt receive high marks.
-
-InterviewAI implements a **strictly calibrated local NLP evaluation engine** in [`ai-services/nlp-service/main.py`](file:///C:/Workspace/Workspace/InterviewApp/ai-services/nlp-service/main.py).
+InterviewAI solves this with an **offline, deterministic, mathematically calibrated evaluation engine** located in [`ai-services/nlp-service/main.py`](file:///C:/Workspace/Workspace/InterviewApp/ai-services/nlp-service/main.py).
 
 ---
 
-## 2. Multi-Pillar Concept & Keyword Matching Pipeline
+## 2. Multi-Pillar Matching Architecture
 
 ```mermaid
 flowchart TD
-    Transcript["Candidate Spoken Transcript"] --> Normalizer["Text Normalization\n(Lowercasing, Number-word conversion, Stemming)"]
-    Question["Question Metadata\n(Keywords, Expected Concepts, Misconceptions, Rubric)"] --> Normalizer
+    Transcript["Candidate Spoken Transcript"] --> Preprocess["Text Normalization & Stemming\n- Number-word conversion (3-way -> three way)\n- Punctuation removal & Stopword filtering"]
+    QuestionMetadata["Question Evaluation Schema\n- keywords (List[str])\n- expectedConcepts (List[str])\n- acceptablePatterns (List[str])\n- commonMisconceptions (List[str])"] --> Preprocess
 
-    Normalizer --> Pillar1["Pillar 1: Technical Keyword Stem Matcher"]
-    Normalizer --> Pillar2["Pillar 2: Expected Concept Subphrase Matcher"]
+    Preprocess --> Pillar1["Pillar 1: Keyword Stem Matcher\n- Multi-token prefix matching (min length >= 4)\n- Subphrase containment"]
+    Preprocess --> Pillar2["Pillar 2: Expected Concept Matcher\n- Sub-token threshold matching (>= 28% match)\n- Semantic concept hit ratio"]
 
-    Pillar1 --> Coverage["Compute Base Concept Coverage (0.0 - 1.0)"]
-    Pillar2 --> Coverage
+    Pillar1 --> BaseCoverage["Compute Base Coverage: (0.40 * kw_ratio) + (0.60 * concept_ratio)"]
+    Pillar2 --> BaseCoverage
 
-    Coverage --> EchoCheck{"Prompt-Echo Ratio > 65%?"}
-    EchoCheck -- Yes --> EchoPenalty["Cap Correctness <= 10.0\nOverall <= 12.0"]
-    EchoCheck -- No --> BuzzCheck{"Keywords without Action Verbs?"}
+    BaseCoverage --> PatternBoost{"Acceptable Alternative Pattern Found?"}
+    PatternBoost -- Yes --> AddBoost["Base Coverage += 0.10 (Cap at 1.0)"]
+    PatternBoost -- No --> EchoCheck{"Prompt-Echo Ratio > 65%?"}
+    AddBoost --> EchoCheck
 
-    BuzzCheck -- Yes --> BuzzPenalty["Cap Correctness <= 20.0\nOverall <= 20.0"]
-    BuzzCheck -- No --> MiscCheck{"Factual Inversion / Misconception Detected?"}
+    EchoCheck -- Yes --> EchoPenalty["Cap Correctness <= 10.0 | Overall <= 12.0"]
+    EchoCheck -- No --> BuzzCheck{"Keywords >= 35% but NO Action Verbs?"}
 
-    MiscCheck -- Yes --> MiscPenalty["Deduct 60.0 Points from Correctness"]
+    BuzzCheck -- Yes --> BuzzPenalty["Cap Correctness <= 20.0 | Overall <= 20.0"]
+    BuzzCheck -- No --> MiscCheck{"Factual Inversion / Contradiction Detected?"}
+
+    MiscCheck -- Yes --> DeductMisc["Deduct 60.0 Points from Correctness"]
     MiscCheck -- No --> ComputeRaw["Compute Weighted Composite Score:\nRelevance 25% + Correctness 40% + Completeness 20% + Comm 15%"]
+    DeductMisc --> ComputeRaw
 
-    ComputeRaw --> FloorGate{"Strict Correctness Floor Gating"}
-    FloorGate --> FinalScore["Final Calibrated NLP Score (0 - 100)"]
+    ComputeRaw --> FloorGating["Strict Mathematical Correctness Floor Gating"]
+    FloorGating --> FinalResult["Final Report Metric: (0 - 100)"]
 ```
 
 ---
 
-## 3. Strict Correctness Floor & Gating Rules
+## 3. Mathematical Scoring Formulation & Floor Gating
 
-To guarantee that incorrect, vague, or nonsensical answers never receive passing scores, the evaluator enforces hard mathematical bounds:
+### 3.1 Composite Score Calculation
+$$\text{Raw Overall} = (\text{Relevance} \times 0.25) + (\text{Correctness} \times 0.40) + (\text{Completeness} \times 0.20) + (\text{Communication} \times 0.15)$$
 
-$$\text{Overall Score} = 
+### 3.2 Piecewise Floor Gating Rules
+To guarantee that fluent but factually empty answers cannot pass:
+
+$$\text{Final Score} = 
 \begin{cases}
-0.0 & \text{if answer is absurd / sarcastic} \\
-\le 12.0 & \text{if answer is mostly a prompt echo} \\
-\le 20.0 & \text{if answer is a buzzword dump} \\
-\min(8.0, \text{correctness}) & \text{if correctness} < 10.0 \\
-\min(20.0, \text{raw\_overall} \times 0.50) & \text{if correctness} < 25.0 \\
-\min(38.0, \text{raw\_overall}) & \text{if correctness} < 40.0 \\
-\text{raw\_overall} & \text{otherwise}
+\min(5.0, \text{Raw Overall}) & \text{if answer is absurd / sarcastic} \\
+\min(12.0, \text{Raw Overall}) & \text{if answer is prompt-echoing} \\
+\min(20.0, \text{Raw Overall}) & \text{if answer is buzzword dump} \\
+\min(8.0, \text{Correctness}) & \text{if Correctness} < 10.0 \\
+\min(20.0, \text{Raw Overall} \times 0.50) & \text{if Correctness} < 25.0 \\
+\min(38.0, \text{Raw Overall}) & \text{if Correctness} < 40.0 \\
+\text{Raw Overall} & \text{otherwise}
 \end{cases}$$
 
 ---
 
-## 4. Empirical Test Suite Validation
+## 4. Empirical 14-Scenario Strictness Benchmark
 
-The local NLP engine is rigorously validated against 14 benchmark scenarios in [`scratch/test_evaluation_strictness.py`](file:///C:/Users/HP/.gemini/antigravity-ide/brain/d25bbc85-ed83-4556-8004-1d1ef1aa466e/scratch/test_evaluation_strictness.py) with a **100% pass rate**:
+Validated against [`scratch/test_evaluation_strictness.py`](file:///C:/Users/HP/.gemini/antigravity-ide/brain/d25bbc85-ed83-4556-8004-1d1ef1aa466e/scratch/test_evaluation_strictness.py) with a **100% pass rate**:
 
-| Question Domain | Candidate Answer Type | Expected Score | Actual Score | Status |
-| :--- | :--- | :--- | :--- | :--- |
-| **OS (RAID Structure)** | Correct technical explanation | `85 - 98` | **95.5** | **PASS** |
-| | Partially correct (RAID 0/1 only) | `50 - 75` | **58.0** | **PASS** |
-| | Incomplete 1-line definition | `25 - 50` | **34.1** | **PASS** |
-| | Completely wrong (GPU rendering) | `0 - 20` | **0.0** | **PASS** |
-| | Buzzword dump (no verbs) | `10 - 30` | **12.8** | **PASS** |
-| | Sarcastic ("raid refrigerator for pizza") | `0 - 10` | **0.8** | **PASS** |
-| | Prompt echo (repeats question) | `0 - 15` | **2.4** | **PASS** |
-| **Networks (TCP vs UDP)** | Correct explanation (3-way handshake) | `85 - 98` | **95.5** | **PASS** |
-| | Inverted ("UDP uses 3-way handshake") | `0 - 25` | **14.8** | **PASS** |
-| | Irrelevant (CSS Flexbox) | `0 - 15` | **0.0** | **PASS** |
-| | Sarcastic ("TCP is a penguin") | `0 - 10` | **1.5** | **PASS** |
-| **OS (Deadlock Conditions)** | Correct (All 4 Coffman conditions) | `88 - 98` | **95.5** | **PASS** |
-| | Partially correct (2 conditions only) | `50 - 75` | **74.6** | **PASS** |
-| | Completely wrong (unplugged monitor) | `0 - 15` | **0.0** | **PASS** |
+```text
+========================================================================
+[PROD SUITE] TESTING PRODUCTION AI-SERVICES/NLP-SERVICE/MAIN.PY
+========================================================================
+
+Question: "What is RAID structure in OS? What are the different levels of RAID configuration?"
+  [Correct               ] Score: 95.5 (Correctness: 98.0) | Expected [85-98] -> PASS
+  [Partially Correct     ] Score: 58.0 (Correctness: 50.0) | Expected [50-75] -> PASS
+  [Incomplete            ] Score: 34.1 (Correctness: 30.0) | Expected [25-50] -> PASS
+  [Completely Wrong      ] Score:  0.0 (Correctness:  0.0) | Expected [0-20]  -> PASS
+  [Buzzword Dump         ] Score: 12.8 (Correctness: 15.0) | Expected [10-30] -> PASS
+  [Sarcastic / Absurd    ] Score:  0.8 (Correctness:  0.0) | Expected [0-10]  -> PASS
+  [Prompt Echo           ] Score:  2.4 (Correctness:  2.2) | Expected [0-15]  -> PASS
+------------------------------------------------------------------------
+Question: "What is the difference between TCP and UDP?"
+  [Correct               ] Score: 95.5 (Correctness: 98.0) | Expected [85-98] -> PASS
+  [Inverted / Wrong      ] Score: 14.8 (Correctness: 10.0) | Expected [0-25]  -> PASS
+  [Irrelevant            ] Score:  0.0 (Correctness:  0.0) | Expected [0-15]  -> PASS
+  [Sarcastic / Absurd    ] Score:  1.5 (Correctness:  0.0) | Expected [0-10]  -> PASS
+------------------------------------------------------------------------
+Question: "What is deadlock, and what conditions are needed for it to occur?"
+  [Correct               ] Score: 95.5 (Correctness: 98.0) | Expected [88-98] -> PASS
+  [Partially Correct     ] Score: 74.6 (Correctness: 83.3) | Expected [50-75] -> PASS
+  [Completely Wrong      ] Score:  0.0 (Correctness:  0.0) | Expected [0-15]  -> PASS
+------------------------------------------------------------------------
+
+Final Result: 14/14 Tests Passed (100.0% Strictness & Accuracy)
+```

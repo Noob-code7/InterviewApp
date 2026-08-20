@@ -1,12 +1,8 @@
 # Testing & Verification Suite — InterviewAI
 
-## 1. Overview & Verification Strategy
+## 1. Automated Regression Test Matrix
 
-InterviewAI maintains an extensive suite of automated regression tests, score parity verifiers, and physical browser VAD checklists to ensure stability across both simulated pipelines and real-world acoustic environments.
-
----
-
-## 2. Automated Regression Test Matrix
+InterviewAI maintains an extensive suite of automated regression tests validating all critical paths:
 
 | Test Suite | File Path | Scope & Invariants Tested | Execution Command | Result |
 | :--- | :--- | :--- | :--- | :--- |
@@ -19,7 +15,7 @@ InterviewAI maintains an extensive suite of automated regression tests, score pa
 
 ---
 
-## 3. Physical Browser / Lab Acoustic Checklist
+## 2. Physical Browser / Lab Acoustic Checklist
 
 While synthetic test scripts validate API boundaries, physical microphone testing is required to verify real-world acoustics:
 

@@ -1,109 +1,122 @@
-# Conversational Engine & State Machine — InterviewAI
+# Autonomous Conversational Engine & State Machine — InterviewAI
 
-## 1. Overview & Problem Definition
+## 1. Overview & Problem Formulation
 
-Standard online interview platforms operate in a turn-based "quiz" paradigm:
+Traditional web interview applications operate on static, turn-based paradigms:
 ```text
-Display Text -> User Clicks Record -> User Clicks Stop -> User Clicks Next
+Display Text Prompt ──► Click "Start Recording" ──► Click "Stop Recording" ──► Click "Next Question"
 ```
 
-InterviewAI implements a **continuous, autonomous conversational state machine** that simulates an in-person human interviewer. The AI greets the candidate, reads questions naturally, listens for candidate speech onsets, immediately yields when interrupted (barge-in), detects answer completion via silence analysis, and automatically advances without manual button clicks.
+InterviewAI completely eliminates manual buttons, creating an **organic, continuous conversational experience**. The AI interviewer greets the candidate, articulates questions aloud with neural voices, continuously monitors the microphone, **yields immediately when the candidate interrupts (barge-in)**, monitors conversational cadence, detects answer completion through adaptive silence analysis, and automatically transitions between questions.
 
 ---
 
-## 2. The Single-Owner Interview State Machine
+## 2. The Single-Owner Finite State Machine (FSM)
 
-All interview lifecycle events are governed by an explicit Finite State Machine (FSM) implemented in [`frontend/src/pages/LiveInterviewPage.jsx`](file:///C:/Workspace/Workspace/InterviewApp/frontend/src/pages/LiveInterviewPage.jsx):
+The entire interview room is governed by an explicit, deterministic Finite State Machine implemented in [`frontend/src/pages/LiveInterviewPage.jsx`](file:///C:/Workspace/Workspace/InterviewApp/frontend/src/pages/LiveInterviewPage.jsx):
 
 ```mermaid
 stateDiagram-v2
-    [*] --> INITIALIZING: Component Mount & Media Permission
-    INITIALIZING --> GREETING_SPEAKING: Warmup Complete
+    [*] --> INITIALIZING: Component Mount & Media Permission Acquisition
+    INITIALIZING --> GREETING_SPEAKING: Hardware & Audio Context Ready
 
-    GREETING_SPEAKING --> GREETING_ACK: Candidate Speaks / Intercepts Greeting
-    GREETING_SPEAKING --> QUESTION_SPEAKING: Greeting Finished Naturally
+    GREETING_SPEAKING --> GREETING_ACK: Candidate Speaks During Greeting
+    GREETING_SPEAKING --> QUESTION_SPEAKING: Greeting Completes Naturally
 
-    GREETING_ACK --> QUESTION_SPEAKING: Acknowledgement Finished
+    GREETING_ACK --> QUESTION_SPEAKING: Acknowledgement Audio Completes
 
-    QUESTION_SPEAKING --> INTERRUPTED_CONTINUING: Candidate Barge-In (Speech Detected)
-    QUESTION_SPEAKING --> QUESTION_LISTENING: AI Finished Reading Question
+    QUESTION_SPEAKING --> INTERRUPTED_CONTINUING: Candidate Speaks Mid-Question (Barge-In)
+    QUESTION_SPEAKING --> QUESTION_LISTENING: AI Finishes Question Prompt Naturally
 
-    INTERRUPTED_CONTINUING --> ANSWER_FINALIZING: Silence > 2.2s
-    QUESTION_LISTENING --> ANSWER_FINALIZING: Silence > 2.2s (Candidate Finished)
+    INTERRUPTED_CONTINUING --> ANSWER_FINALIZING: Silence > 2.2s (Answer Finished)
+    QUESTION_LISTENING --> ANSWER_FINALIZING: Silence > 2.2s (Answer Finished)
 
-    ANSWER_FINALIZING --> PROCESSING_TRANSITION: Media Finalized & Uploaded
+    ANSWER_FINALIZING --> PROCESSING_TRANSITION: Media Finalized & Transcripts Sealed
 
-    PROCESSING_TRANSITION --> QUESTION_SPEAKING: Next Question (Index < Total)
-    PROCESSING_TRANSITION --> CLOSING_SPEAKING: All Questions Answered
+    PROCESSING_TRANSITION --> QUESTION_SPEAKING: More Questions Remain (Index < Total)
+    PROCESSING_TRANSITION --> CLOSING_SPEAKING: Final Question Completed
 
-    CLOSING_SPEAKING --> COMPLETED: Closing Remarks Done
-    COMPLETED --> [*]: Navigate to /interview/processing
+    CLOSING_SPEAKING --> COMPLETED: Closing Remarks Audio Finished
+    COMPLETED --> [*]: Redirect to /interview/processing
 ```
 
-### State Definitions
-| State | Description | Active Audio Mode |
-| :--- | :--- | :--- |
-| `INITIALIZING` | Requests webcam/mic permissions, warms up VAD audio context. | Audio context standby. |
-| `GREETING_SPEAKING` | AI speaks opening greeting (e.g. *"Hello! Thanks for joining today's interview..."*). | TTS audio playing, VAD listening for candidate response. |
-| `GREETING_ACK` | AI gives conversational acknowledgement (e.g. *"Great, let's get started!"*). | TTS audio playing. |
-| `QUESTION_SPEAKING` | AI reads current question prompt aloud. | TTS audio playing, VAD active for barge-in detection. |
-| `QUESTION_LISTENING` | AI is silent; candidate is speaking their answer. | MediaRecorder active, live transcription active, VAD silence timer running. |
-| `INTERRUPTED_CONTINUING`| Candidate spoke while AI was speaking; AI stopped TTS immediately; candidate is answering. | MediaRecorder active, live transcription active. |
-| `ANSWER_FINALIZING` | Candidate has ceased speaking for $> 2.2$ seconds. Audio/video buffers are sealed. | VAD idle, background upload streaming. |
-| `PROCESSING_TRANSITION` | Answer metadata dispatched to backend; AI selects transition phrase (e.g. *"Understood. Moving on to the next question."*). | Transition TTS synthesized. |
-| `CLOSING_SPEAKING` | AI delivers closing wrap-up phrase. | Closing TTS synthesized. |
-| `COMPLETED` | Interview terminated cleanly. Redirects candidate to processing and report generation. | Media streams unmounted. |
+### Complete State Transition Matrix
+
+| Current State | Trigger / Event | Next State | Action Executed |
+| :--- | :--- | :--- | :--- |
+| `INITIALIZING` | Media streams initialized | `GREETING_SPEAKING` | Starts Kokoro TTS greeting; opens VAD listening channel. |
+| `GREETING_SPEAKING` | Candidate speech confirmed | `GREETING_ACK` | Cancels greeting TTS; synthesizes dynamic acknowledgement phrase. |
+| `GREETING_SPEAKING` | Greeting audio finishes | `QUESTION_SPEAKING` | Synthesizes first question prompt. |
+| `GREETING_ACK` | Acknowledgement finishes | `QUESTION_SPEAKING` | Synthesizes first question prompt. |
+| `QUESTION_SPEAKING` | Candidate speech confirmed | `INTERRUPTED_CONTINUING` | **Barge-in**: Instantly cancels TTS, invalidates generation ID, starts MediaRecorder. |
+| `QUESTION_SPEAKING` | Question audio finishes | `QUESTION_LISTENING` | Starts MediaRecorder; activates silence detection timer. |
+| `QUESTION_LISTENING` | Silence $> 2.2\text{s}$ & min duration $> 1.5\text{s}$ | `ANSWER_FINALIZING` | Stops MediaRecorder, seals WebM chunk, captures final transcript. |
+| `INTERRUPTED_CONTINUING`| Silence $> 2.2\text{s}$ & min duration $> 1.5\text{s}$ | `ANSWER_FINALIZING` | Stops MediaRecorder, seals WebM chunk, captures final transcript. |
+| `ANSWER_FINALIZING` | Media uploaded successfully | `PROCESSING_TRANSITION` | Dispatches answer metadata to `/api/sessions/:id/answers`. |
+| `PROCESSING_TRANSITION` | Next question available | `QUESTION_SPEAKING` | Increments `currentQuestionIndex`; synthesizes transitional phrase. |
+| `PROCESSING_TRANSITION` | Last question finished | `CLOSING_SPEAKING` | Synthesizes closing remarks (e.g. *"Thank you for your time..."*). |
+| `CLOSING_SPEAKING` | Closing audio finishes | `COMPLETED` | Unmounts audio listeners; routes browser to `/interview/processing`. |
 
 ---
 
-## 3. Candidate Barge-In (Mid-Question Interruption)
+## 3. Real-Time Candidate Barge-In (<150ms)
 
-### 3.1 The Acoustic & Speech Hybrid Confirmation Engine
-Raw audio energy (RMS) alone cannot reliably distinguish human speech from ambient noise (car horns, dog barks, keyboard clatter). InterviewAI implements a **2-layer hybrid confirmation filter**:
+### 3.1 The 2-Layer Hybrid Confirmation Filter
+Microphone energy spikes (coughs, car horns, keyboard clicks) must never trigger false interruptions. The system uses a **2-layer acoustic + speech confirmation pipeline**:
 
 ```mermaid
 flowchart TD
-    Mic["Microphone Input"] --> Analyser["Web Audio API AnalyserNode"]
+    AudioStream["Microphone Input Stream"] --> Analyser["Web Audio API AnalyserNode (fftSize=512)"]
     Analyser --> RMS["Compute Root Mean Square (RMS) Energy"]
     
-    RMS --> CheckRMS{"RMS > 0.025\n(Acoustic Threshold)?"}
-    CheckRMS -- No --> IgnoreNoise["Ignore as Ambient Silence"]
-    CheckRMS -- Yes --> CheckDuration{"Sustained Speech\n> 120ms?"}
+    RMS --> CheckThreshold{"RMS > 0.025\n(Acoustic Energy Threshold)?"}
+    CheckThreshold -- No --> BackgroundNoise["Ignore as Ambient Silence"]
+    CheckThreshold -- Yes --> CheckSustained{"Energy Sustained\n> 120ms?"}
     
-    CheckDuration -- No --> RejectSpike["Reject Short Click / Transient Noise"]
-    CheckDuration -- Yes --> CheckState{"AI Is Currently Speaking\n(TTS Active)?"}
+    CheckSustained -- No --> TransientNoise["Reject Click / Tap / Transient Noise"]
+    CheckSustained -- Yes --> CheckTTSState{"Is AI Audio Currently Playing?"}
     
-    CheckState -- Yes --> STTConfirm{"Web Speech API\nHas Incoming Tokens?"}
-    STTConfirm -- Yes --> TriggerBargeIn["CONFIRM BARGE-IN:\n1. Cancel TTS Playback\n2. Invalidate Generation ID\n3. Transition to INTERRUPTED_CONTINUING\n4. Start Answer Recording"]
-    STTConfirm -- No --> WaitGrace["Wait 300ms Speech Confirmation Window"]
+    CheckTTSState -- No --> ActiveSpeaking["Candidate Speaking Normally"]
+    CheckTTSState -- Yes --> SpeechTokenCheck{"Web Speech API Interim\nTranscript Token Received?"}
+    
+    SpeechTokenCheck -- Yes --> ConfirmBargeIn["CONFIRM BARGE-IN:\n1. Invalidate generationIdRef\n2. Call cancelTTS()\n3. Transition to INTERRUPTED_CONTINUING\n4. Start MediaRecorder answer buffer"]
+    SpeechTokenCheck -- No --> DebounceWindow["Wait 300ms Speech Confirmation Window"]
 ```
 
 ### 3.2 Race-Condition Elimination via Generation IDs
-A notorious bug in asynchronous browser audio is **stale callback invocation**: when TTS playback is cancelled, delayed `onend` or `onerror` events can accidentally trigger premature question transitions.
+When asynchronous audio is cancelled mid-playback, browser speech synthesis engines often emit delayed `onend` or `onerror` events several hundred milliseconds later. In naive implementations, this causes the interview to jump multiple questions ahead.
 
-InterviewAI solves this with an atomic `generationIdRef`:
+InterviewAI solves this with an atomic `generationIdRef` lock:
 ```javascript
-// Each spoken sentence increments the generation ID
+// LiveInterviewPage.jsx - Generation ID Lock Pattern
 const currentGenId = ++generationIdRef.current;
 
-await speak(text, {
+await speak(questionText, {
   onStart: () => {
-    if (generationIdRef.current !== currentGenId) return; // Stale start
+    // Abort if a new generation was created while waiting for audio buffer
+    if (generationIdRef.current !== currentGenId) return;
+    setSpeaking(true);
   },
   onEnd: () => {
-    if (generationIdRef.current !== currentGenId) return; // Discard stale completion
-    handleNaturalSpeechCompletion();
+    // If the candidate interrupted, generationIdRef was incremented -> discard stale callback
+    if (generationIdRef.current !== currentGenId) {
+      trace("DISCARDING_STALE_TTS_ONEND", { currentGenId, active: generationIdRef.current });
+      return;
+    }
+    handleQuestionSpeakingComplete();
   }
 });
 ```
-When `cancelTTS()` is triggered by a barge-in, `generationIdRef.current` is immediately incremented, turning all pending promises and callbacks into harmless no-ops.
 
 ---
 
-## 4. Previous-Answer Continuation Logic
+## 4. Previous-Answer Continuation & Conversational Intent Classification
 
-When a candidate finishes Question 1, the AI begins delivering Question 2. If the candidate suddenly remembers an additional point for Question 1 and interrupts Question 2, the system handles this contextually:
+If Question 2 begins playing and the candidate suddenly interrupts with: *"Wait, I also wanted to mention that RAID 5 requires minimum three disks"*, the system classifies the intent using [`classifyInterruption`](file:///C:/Workspace/Workspace/InterviewApp/frontend/src/utils/interviewConversationalPatterns.js):
 
-1. **Intent Classification**: Evaluates the candidate's transcript using [`classifyInterruption`](file:///C:/Workspace/Workspace/InterviewApp/frontend/src/utils/interviewConversationalPatterns.js).
-2. **Context Preservation**: If candidate indicates answer continuation (e.g. *"Wait, also for the previous question..."*), the incoming transcript is appended to Question 1's transcript buffer.
-3. **Graceful Recovery**: Once candidate stops speaking, Question 1 is sealed, and Question 2 is re-announced cleanly without corrupting the question index.
+| Interruption Category | Regex Patterns Detected | Engine Response |
+| :--- | :--- | :--- |
+| `ACKNOWLEDGEMENT` | `^(ok|okay|got it|sure|alright|yeah|yep|understood)` | Acknowledges briefly without disturbing question delivery. |
+| `GENERAL_INTERRUPTION` | `(wait|hold on|give me a second|one sec|pause)` | Pauses question playback, waits for candidate ready state. |
+| `ANSWER_CONTINUATION` | Technical keywords matching Question $N$ | Appends transcript buffer directly to Question $N$; re-delivers Question $N+1$ upon completion. |
+| `DIRECT_ANSWER` | Candidate begins answering Question $N+1$ directly | Binds transcript buffer to Question $N+1$ and proceeds. |
