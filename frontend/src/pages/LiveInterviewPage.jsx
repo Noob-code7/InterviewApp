@@ -94,6 +94,7 @@ export default function LiveInterviewPage() {
   const timerRef = useRef(null);
   const recognizerRef = useRef(null);
   const autoStartRef = useRef(false);
+  const handleStartRecordingRef = useRef(null);
 
   // Concurrency & Duplicate Transition Guards
   const isAdvancingRef = useRef(false);
@@ -265,7 +266,7 @@ export default function LiveInterviewPage() {
     const resumeCandidateListening = () => {
       setTimeout(() => {
         setAiSpeaking(false);
-        handleStartRecording();
+        handleStartRecordingRef.current?.();
       }, 400);
     };
 
@@ -301,7 +302,7 @@ export default function LiveInterviewPage() {
     } catch (e) {
       resumeCandidateListening();
     }
-  }, [displayedQuestionText, handleStartRecording]);
+  }, [displayedQuestionText]);
 
   // Barge-In Interruption Handler
   const handleBargeInInterruption = useCallback(
@@ -334,7 +335,7 @@ export default function LiveInterviewPage() {
 
       setInterviewState(INTERVIEW_STATES.LISTENING);
       if (!isRecording) {
-        handleStartRecording(text || "");
+        handleStartRecordingRef.current?.(text || "");
       }
     },
     [isRecording, handleRepeatQuestion, handleClarificationRequest]
@@ -735,6 +736,8 @@ const intent = classifyInterruption(liveTranscriptRef.current);
       console.error("Failed to start MediaRecorder:", startErr);
     }
   }, [triggerAnswerCompletion, interviewState]);
+
+  handleStartRecordingRef.current = handleStartRecording;
 
   // Automatic Question Transition Execution
   const executeQuestionTransition = useCallback(
