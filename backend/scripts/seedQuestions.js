@@ -244,18 +244,53 @@ const SEED_QUESTIONS = [
   }
 ]
 
+import fs from 'fs'
+
 async function seed() {
   try {
     await mongoose.connect(MONGODB_URI)
     console.log('✅ Connected to MongoDB for seeding')
 
-    // Upsert seed questions into MongoDB with complete schema fields
+    // 1. Seed base SEED_QUESTIONS
     for (const q of SEED_QUESTIONS) {
       await Question.updateOne(
         { questionText: q.questionText },
         { $set: { ...q, college: null } },
         { upsert: true }
       )
+    }
+
+    // 2. Seed comprehensive question bank (285 questions across OS, DBMS, SE, Networks, Java, DSA)
+    const jsonPath = path.resolve(__dirname, '../data/comprehensiveQuestionBank.json')
+    if (fs.existsSync(jsonPath)) {
+      const fullBank = JSON.parse(fs.readFileSync(jsonPath, 'utf8'))
+      for (const q of fullBank) {
+        await Question.updateOne(
+          { questionText: new RegExp('^' + q.questionText.trim().replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&') + '$', 'i') },
+          {
+            $set: {
+              questionText: q.questionText.trim(),
+              track: q.track || 'subject',
+              tags: q.tags || ['technical'],
+              difficulty: q.difficulty || 'medium',
+              keywords: q.keywords || [],
+              expectedConcepts: q.expectedConcepts || [],
+              acceptablePatterns: q.acceptablePatterns || [],
+              commonMisconceptions: q.commonMisconceptions || [],
+              referenceAnswer: q.referenceAnswer || '',
+              scoringRubric: q.scoringRubric || {
+                relevanceWeight: 0.25,
+                conceptWeight: 0.40,
+                completenessWeight: 0.20,
+                structureWeight: 0.15,
+              },
+              college: null,
+            }
+          },
+          { upsert: true }
+        )
+      }
+      console.log(`✅ Loaded and upserted ${fullBank.length} questions from comprehensiveQuestionBank.json`)
     }
 
     const count = await Question.countDocuments()

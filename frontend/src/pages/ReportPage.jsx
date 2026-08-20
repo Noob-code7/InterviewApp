@@ -77,6 +77,10 @@ export default function ReportPage() {
 
   const trackBreakdown = report.trackBreakdown || {};
 
+  const writingExcluded = report.includeWritingTest === false;
+  const writingSubmitted = !!report.writingSubmission || writingScore > 0;
+  const writingStatusLabel = writingExcluded ? "Not included" : "Skipped";
+
   const getReadinessBadge = (level) => {
     switch (level) {
       case "market-ready":
@@ -267,28 +271,34 @@ export default function ReportPage() {
             </div>
 
             {/* Technical Writing */}
-            {report.includeWritingTest !== false && (
             <div className="bg-white border border-[#E0DFD9] rounded-2xl p-5 flex flex-col justify-between shadow-sm hover:shadow-md hover:border-[#1D5DFF]/40 hover:-translate-y-0.5 transition-all duration-200 group">
               <div className="flex items-center justify-between">
                 <span className="font-mono text-[10px] font-bold text-[#6E6D68] uppercase tracking-wider">
                   Technical Writing
                 </span>
-                <span className="w-2 h-2 rounded-full bg-purple-500" />
+                <span className={`w-2 h-2 rounded-full ${writingSubmitted ? "bg-purple-500" : "bg-[#D1D5DB]"}`} />
               </div>
               <div className="my-3">
                 <div className="text-3xl font-extrabold text-[#111110] font-mono flex items-baseline gap-1">
-                  {writingScore}<span className="text-sm font-semibold text-[#6E6D68]">%</span>
+                  {writingSubmitted
+                    ? <>{writingScore}<span className="text-sm font-semibold text-[#6E6D68]">%</span></>
+                    : <span className="text-xl font-bold text-[#6E6D68] tracking-wide">{writingStatusLabel}</span>}
                 </div>
                 <div className="w-full bg-[#F6F5F0] h-2 rounded-full mt-2 overflow-hidden border border-[#E0DFD9]">
                   <div
-                    className="bg-purple-600 h-full rounded-full transition-all duration-700 ease-out"
-                    style={{ width: `${writingScore}%` }}
+                    className={`${writingSubmitted ? "bg-purple-600" : "bg-[#D1D5DB]"} h-full rounded-full transition-all duration-700 ease-out`}
+                    style={{ width: writingSubmitted ? `${writingScore}%` : "8%" }}
                   />
                 </div>
               </div>
-              <span className="text-xs text-[#6E6D68] font-inter">Grammar, logical flow & technical explanation</span>
+              <span className="text-xs text-[#6E6D68] font-inter">
+                {writingSubmitted
+                  ? "Grammar, logical flow & technical explanation"
+                  : writingExcluded
+                    ? "Not part of this interview session."
+                    : "Candidate opted to skip the written assessment."}
+              </span>
             </div>
-            )}
 
           </div>
         </div>

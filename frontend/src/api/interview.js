@@ -6,6 +6,8 @@ export const interviewApi = {
 
   getWritingSession: (sessionId) => api.get(`/api/sessions/${sessionId}`),
 
+  recordQuestionHistory: (sessionId, questions) => api.post(`/api/question-history/${sessionId}`, { questions }),
+
   uploadAnswer: async (sessionId, questionId, videoBlob, options = {}) => {
     try {
       // 1. Upload media directly via storageApi (Cloudflare R2 or local fallback)

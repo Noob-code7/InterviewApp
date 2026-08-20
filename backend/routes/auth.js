@@ -10,7 +10,8 @@ const isDev = process.env.NODE_ENV !== 'production'
 // Rate limiter for auth endpoints — generous in dev mode to prevent developer lockouts
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: isDev ? 100 : 15,
+  max: isDev ? 10000 : 15,
+  skip: () => isDev,
   standardHeaders: true,
   legacyHeaders: false,
   message: { success: false, error: 'Too many auth attempts. Try again in 15 minutes.' },

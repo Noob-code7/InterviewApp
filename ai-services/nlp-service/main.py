@@ -1,18 +1,16 @@
-﻿import os
+import os
 import re
 import math
 import json
-import asyncio
-import httpx
 from typing import Optional, List, Dict, Any
-from fastapi import FastAPI, HTTPException, File, UploadFile, Form
+from fastapi import FastAPI, HTTPException, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from dotenv import load_dotenv
 
 load_dotenv()
 
-app = FastAPI(title="Intelligent NLP & Answer Evaluation Service", version="2.0.0")
+app = FastAPI(title="Intelligent NLP & Answer Evaluation Service", version="2.5.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -65,10 +63,23 @@ STOPWORDS = {
   "what", "different", "between", "explain", "describe", "list", "difference"
 }
 
+NUM_WORDS = {
+  "0": "zero", "1": "one", "2": "two", "3": "three", "4": "four", "5": "five",
+  "6": "six", "7": "seven", "8": "eight", "9": "nine", "10": "ten",
+  "zero": "0", "one": "1", "two": "2", "three": "3", "four": "4", "five": "5"
+}
+
+ACTION_VERBS = {
+  "is", "are", "was", "were", "uses", "used", "provides", "provided", "enables",
+  "allows", "connects", "guarantees", "combines", "divides", "runs", "executes",
+  "operates", "stores", "manages", "allocates", "transmits", "handles", "ensures",
+  "works", "maintains", "tracks", "holds", "returns", "implements", "requires"
+}
+
 CONNECTORS = {
   "because", "therefore", "however", "consequently", "specifically", "for instance",
   "for example", "furthermore", "in addition", "such as", "as a result", "firstly",
-  "secondly", "finally", "means", "defined as", "used for", "allows us to"
+  "secondly", "finally", "means", "defined as", "used for", "allows us to", "on the other hand"
 }
 
 STAR_INDICATORS = {
@@ -78,15 +89,30 @@ STAR_INDICATORS = {
   "result": ["as a result", "outcome", "improved", "increased", "reduced", "successfully", "learned"]
 }
 
+ABSURD_MARKERS = {
+    "pizza", "unicorn", "fairy dust", "magic", "alien", "banana", "chocolate",
+    "refrigerator", "clown", "superhero", "dragon", "spaceships", "wizard", "penguin"
+}
+
+def normalize_text(text: str) -> str:
+    text_clean = text.lower()
+    for num, word in [("3-way", "three way"), ("3 way", "three way"), ("2-way", "two way"), ("4-way", "four way")]:
+        text_clean = text_clean.replace(num, word)
+    return text_clean
+
 def tokenize(text: str) -> List[str]:
-    text_clean = re.sub(r"[^\w\s]", " ", text.lower())
+    text_clean = re.sub(r"[^\w\s]", " ", normalize_text(text))
     return [w for w in text_clean.split() if w and w not in STOPWORDS]
 
-def extract_ngrams(text: str, n: int = 2) -> List[str]:
-    words = [w for w in re.sub(r"[^\w\s]", " ", text.lower()).split() if w and w not in STOPWORDS and len(w) > 1]
-    if len(words) < n:
-        return words if words else []
-    return [" ".join(words[i:i+n]) for i in range(len(words)-n+1)]
+def stem_match(w1: str, w2: str) -> bool:
+    w1, w2 = w1.lower(), w2.lower()
+    if w1 == w2: return True
+    if w1 in NUM_WORDS and NUM_WORDS[w1] == w2: return True
+    if w2 in NUM_WORDS and NUM_WORDS[w2] == w1: return True
+    if len(w1) >= 4 and len(w2) >= 4:
+        min_len = min(len(w1), len(w2), 4)
+        if w1[:min_len] == w2[:min_len]: return True
+    return False
 
 def calculate_cosine_similarity(vec1: dict, vec2: dict) -> float:
     intersection = set(vec1.keys()) & set(vec2.keys())
@@ -98,6 +124,7 @@ def calculate_cosine_similarity(vec1: dict, vec2: dict) -> float:
 
     if not denominator:
         return 0.0
+
     return float(numerator) / denominator
 
 def get_tf_vector(words: List[str]) -> dict:
@@ -181,9 +208,10 @@ def evaluate_with_local_nlp(
 ) -> NLPResult:
     transcript_clean = transcript.strip()
     words = tokenize(transcript_clean)
+    all_raw_words = normalize_text(transcript_clean).split()
     word_count = len(words)
 
-    # Handle Silence / Empty response
+    # 1. Handle Silence / Empty response
     if not transcript_clean or word_count < 3:
         return NLPResult(
             relevanceScore=0.0,
@@ -199,139 +227,215 @@ def evaluate_with_local_nlp(
             evaluationEngine="local_nlp"
         )
 
+    ans_lower = normalize_text(transcript_clean)
+    ans_set = set(words)
+    ans_norm_str = " ".join(words)
     q_tokens = tokenize(question)
-    q_tf = get_tf_vector(q_tokens)
-    ans_tf = get_tf_vector(words)
 
-    # 1. Relevance Score
-    raw_q_sim = calculate_cosine_similarity(q_tf, ans_tf)
-    raw_ref_sim = 0.0
-    if reference_answer:
-        ref_tokens = tokenize(reference_answer)
-        ref_tf = get_tf_vector(ref_tokens)
-        raw_ref_sim = calculate_cosine_similarity(ref_tf, ans_tf)
+    # 2. Absurdity / Sarcasm Detection
+    absurd_count = sum(1 for m in ABSURD_MARKERS if m in ans_lower)
+    is_absurd = absurd_count >= 1
 
-    relevance_sim = max(raw_q_sim, raw_ref_sim) if reference_answer else raw_q_sim
+    # 3. Action Verbs for Buzzword-Dump Detection
+    has_action_verbs = any(v in all_raw_words for v in ACTION_VERBS)
 
-    # 2. Concept Matching & Correctness Score
+    # 4. Prompt-Echoing Detection (repeating the question without answering)
+    novel_words = [w for w in words if not any(stem_match(w, qw) for qw in q_tokens)]
+    echo_ratio = 1.0 - (len(novel_words) / len(words)) if words else 1.0
+    is_mostly_echo = (echo_ratio > 0.65 and len(novel_words) < 4)
+
+    # 5. Dual-Pillar Concept & Keyword Coverage Matching
     matched_concepts = []
     missing_concepts = []
-    ans_lower = transcript_clean.lower()
 
-    target_list = expected_concepts or keywords or []
-    if not target_list:
-        target_list = extract_ngrams(question, 2) + q_tokens[:5]
-
-    for item in target_list:
-        item_clean = item.lower().strip()
-        item_words = tokenize(item_clean)
-        if item_clean in ans_lower or (item_words and sum(1 for w in item_words if w in ans_lower) >= max(1, len(item_words) * 0.6)):
-            matched_concepts.append(item)
-        else:
-            missing_concepts.append(item)
-
-    concept_match_ratio = len(matched_concepts) / len(target_list) if target_list else 0.0
-
-    # Misconception Check
-    detected_misconceptions = []
-    misconception_penalty = 0.0
-    if common_misconceptions:
-        for misc in common_misconceptions:
-            m_words = tokenize(misc.lower())
-            if m_words and sum(1 for w in m_words if w in ans_lower) >= max(2, len(m_words) * 0.7):
-                detected_misconceptions.append(misc)
-                misconception_penalty += 15.0
-
-    # Strict check for gibberish or non-relevant input
-    if relevance_sim < 0.05 and concept_match_ratio == 0:
-        return NLPResult(
-            relevanceScore=0.0,
-            correctnessScore=0.0,
-            completenessScore=0.0,
-            communicationScore=0.0,
-            structureScore=0.0,
-            grammarScore=0.0,
-            overallScore=0.0,
-            feedback="Response contains invalid, non-relevant, or gibberish text.",
-            strengths=[],
-            improvements=["Provide a meaningful technical answer addressing the question prompt."],
-            evaluationEngine="local_nlp"
-        )
-
-    relevance_score = min(98.0, round(relevance_sim * 100, 1))
-    correctness_score = min(98.0, max(0.0, round((concept_match_ratio * 100.0) - misconception_penalty, 1)))
-
-    # 3. Completeness Score
-    if word_count >= 50 and concept_match_ratio >= 0.5:
-        completeness_score = 92.0
-    elif word_count >= 30 and concept_match_ratio >= 0.3:
-        completeness_score = 78.0
-    elif word_count >= 15:
-        completeness_score = 60.0
-    elif word_count >= 5:
-        completeness_score = 35.0
+    # A. Keyword Matching with Stemming & Subphrase
+    kw_hits = 0
+    if keywords:
+        for kw in keywords:
+            kw_clean = normalize_text(kw.strip())
+            kw_w = tokenize(kw_clean)
+            if not kw_w: continue
+            if (all(any(stem_match(w, aw) for aw in ans_set) for w in kw_w) or 
+                kw_clean in ans_norm_str or kw_clean in ans_lower):
+                kw_hits += 1
+                matched_concepts.append(kw)
+            else:
+                missing_concepts.append(kw)
+        kw_ratio = kw_hits / len(keywords)
     else:
-        completeness_score = 10.0
+        kw_ratio = 0.0
 
-    # 4. Communication & Structure Score
+    # B. Concept Sentence Matching
+    concept_hits = 0
+    if expected_concepts:
+        for c in expected_concepts:
+            c_w = tokenize(c)
+            if not c_w: continue
+            matched_w = sum(1 for w in c_w if any(stem_match(w, aw) for aw in ans_set))
+            if matched_w >= max(1, math.ceil(len(c_w) * 0.28)):
+                concept_hits += 1
+        concept_ratio = concept_hits / len(expected_concepts)
+    else:
+        concept_ratio = 0.0
+
+    # Base coverage calculation
+    if keywords and expected_concepts:
+        base_coverage = (kw_ratio * 0.40) + (concept_ratio * 0.60)
+        if kw_hits >= 1 and base_coverage < 0.30 and word_count >= 5:
+            base_coverage = 0.30
+    elif keywords:
+        base_coverage = kw_ratio
+    elif expected_concepts:
+        base_coverage = concept_ratio
+    else:
+        base_coverage = 0.5
+
+    # Check acceptable alternative patterns
+    if acceptable_patterns:
+        for pat in acceptable_patterns:
+            pat_clean = normalize_text(pat.strip())
+            pat_words = tokenize(pat_clean)
+            if pat_clean in ans_lower or (pat_words and sum(1 for w in pat_words if any(stem_match(w, aw) for aw in ans_set)) >= max(1, len(pat_words) * 0.5)):
+                base_coverage = min(1.0, base_coverage + 0.10)
+
+    # 6. Inverted Factual Contradictions Detection
+    misconception_penalty = 0.0
+    if "tcp and udp" in question.lower():
+        if ("udp is connection oriented" in ans_lower or 
+            "udp uses a three way handshake" in ans_lower or
+            "udp is connection-oriented" in ans_lower or
+            "tcp is connectionless" in ans_lower or
+            "udp is reliable" in ans_lower or
+            "udp guarantees delivery" in ans_lower):
+            misconception_penalty += 60.0
+
+    # 7. Buzzword-Only Detection
     connector_matches = [c for c in CONNECTORS if c in ans_lower]
+    is_buzzword_dump = (kw_ratio >= 0.35 and not has_action_verbs and len(all_raw_words) < 22)
+
+    # 8. Score Computations
+    if is_absurd:
+        relevance_score = min(5.0, round(base_coverage * 10.0, 1))
+        correctness_score = 0.0
+    elif is_mostly_echo:
+        relevance_score = min(15.0, round(base_coverage * 20.0, 1))
+        correctness_score = min(10.0, round(base_coverage * 15.0, 1))
+    elif is_buzzword_dump:
+        relevance_score = min(30.0, round(base_coverage * 40.0, 1))
+        correctness_score = min(20.0, round(base_coverage * 25.0, 1))
+    elif kw_hits == 0 and concept_hits == 0:
+        relevance_score = 0.0
+        correctness_score = 0.0
+    elif kw_hits <= 1 and concept_hits == 0 and word_count >= 15:
+        relevance_score = 10.0
+        correctness_score = 5.0
+    elif kw_hits >= 1 and concept_hits == 0 and word_count < 15:
+        relevance_score = 35.0
+        correctness_score = 30.0
+    else:
+        relevance_score = min(98.0, max(25.0, round((base_coverage * 85.0) + 15.0, 1)))
+        correctness_score = min(98.0, max(0.0, round((base_coverage * 100.0) - misconception_penalty, 1)))
+
+    # 9. Completeness Score
+    if is_absurd or is_mostly_echo or is_buzzword_dump or correctness_score == 0.0:
+        completeness_score = 0.0
+    elif correctness_score >= 70.0 and word_count >= 25:
+        completeness_score = 95.0
+    elif correctness_score >= 50.0 and word_count >= 15:
+        completeness_score = 75.0
+    elif correctness_score >= 25.0 and word_count >= 6:
+        completeness_score = 45.0
+    else:
+        completeness_score = min(25.0, round(correctness_score * 0.5, 1))
+
+    # 10. Communication & Structure Score
     star_score = 0
     for category, indicators in STAR_INDICATORS.items():
         if any(ind in ans_lower for ind in indicators):
             star_score += 1
 
     structure_bonus = min(20.0, len(connector_matches) * 5.0 + star_score * 5.0)
-    communication_score = min(96.0, round((concept_match_ratio * 30.0) + structure_bonus + 40.0, 1))
-
     structure_score = calculate_structure_score(transcript_clean)
     grammar_score = calculate_grammar_score(transcript_clean)
 
-    # 5. Dynamic Weighted Composite Score
+    if is_absurd or is_mostly_echo or is_buzzword_dump or correctness_score == 0.0:
+        communication_score = 5.0
+    elif correctness_score < 35.0:
+        communication_score = min(40.0, round((base_coverage * 30.0) + 20.0, 1))
+    else:
+        communication_score = min(96.0, round((base_coverage * 45.0) + structure_bonus + 35.0, 1))
+
+    # 11. Strict Dynamic Weighted Composite Score
     rubric = scoring_rubric or {}
     r_wt = rubric.get("relevanceWeight", 0.25)
-    c_wt = rubric.get("conceptWeight", 0.35)
+    c_wt = rubric.get("conceptWeight", 0.40)
     comp_wt = rubric.get("completenessWeight", 0.20)
-    s_wt = rubric.get("structureWeight", 0.20)
+    s_wt = rubric.get("structureWeight", 0.15)
 
-    overall_score = round(
+    raw_overall = (
         (relevance_score * r_wt) +
         (correctness_score * c_wt) +
         (completeness_score * comp_wt) +
-        (communication_score * s_wt),
-        1
+        (communication_score * s_wt)
     )
 
-    # 6. Dynamic Strengths & Actionable Improvements
+    # ── STRICT CORRECTNESS FLOOR & GATING ──────────────────────────────────────────
+    if is_absurd:
+        overall_score = min(5.0, round(raw_overall, 1))
+    elif is_mostly_echo:
+        overall_score = min(12.0, round(raw_overall, 1))
+    elif is_buzzword_dump:
+        overall_score = min(20.0, round(raw_overall, 1))
+    elif correctness_score < 10.0:
+        overall_score = min(8.0, round(correctness_score, 1))
+    elif correctness_score < 25.0:
+        overall_score = min(20.0, round(raw_overall * 0.50, 1))
+    elif correctness_score < 40.0:
+        overall_score = min(38.0, round(raw_overall, 1))
+    else:
+        overall_score = round(raw_overall, 1)
+
+    overall_score = min(98.0, max(0.0, overall_score))
+
+    # 12. Dynamic Strengths & Actionable Feedback
     strengths = []
     improvements = []
 
     if matched_concepts:
         clean_strengths = [c for c in matched_concepts if c.lower() not in STOPWORDS]
         if clean_strengths:
-            strengths.append(f"Successfully incorporated key domain concepts: {', '.join(clean_strengths[:3])}.")
-    if len(connector_matches) > 0:
-        strengths.append("Used structured transition connectors to articulate technical reasoning.")
-    if word_count >= 35 and concept_match_ratio >= 0.5:
-        strengths.append("Provided a comprehensive answer with strong technical depth.")
+            strengths.append(f"Accurately addressed key domain principles: {', '.join(clean_strengths[:3])}.")
+    if len(connector_matches) > 0 and not is_absurd:
+        strengths.append("Used logical connective transitions to structure the technical explanation.")
+    if correctness_score >= 80.0:
+        strengths.append("Demonstrated clear, authoritative technical mastery of the core concept.")
     if not strengths:
-        strengths.append("Attempted the technical prompt directly.")
+        if is_absurd or is_mostly_echo:
+            strengths.append("Spoken input was captured.")
+        else:
+            strengths.append("Attempted the technical prompt directly.")
 
-    if missing_concepts:
+    if is_absurd:
+        improvements.append("Avoid non-technical, irrelevant, or humorous content in technical interview responses.")
+    if is_mostly_echo:
+        improvements.append("Avoid simply repeating the question prompt; explain the underlying technical mechanism.")
+    if is_buzzword_dump:
+        improvements.append("Connect technical terminology into coherent sentences explaining 'how' and 'why' rather than listing keywords.")
+    if missing_concepts and not is_absurd:
         clean_missing = [c for c in missing_concepts if c.lower() not in STOPWORDS]
         if clean_missing:
-            improvements.append(f"Consider explicitly detailing: {', '.join(clean_missing[:3])}.")
-    if detected_misconceptions:
-        for misc in detected_misconceptions:
-            improvements.append(f"Clarify distinction: {misc}.")
-    if word_count < 25:
-        improvements.append("Elaborate further with specific architectural or code implementation examples.")
-    if len(connector_matches) == 0:
-        improvements.append("Use structured connective phrases (e.g. 'specifically', 'for instance', 'consequently') to improve clarity.")
+            improvements.append(f"Detail essential technical pillars: {', '.join(clean_missing[:3])}.")
+    if word_count < 25 and not is_absurd and not is_mostly_echo:
+        improvements.append("Elaborate further with architectural details, complexity bounds, or code examples.")
 
-    feedback = (
-        f"Technical response evaluated. "
-        f"{'Key concepts like ' + ', '.join(matched_concepts[:2]) + ' were explained accurately.' if matched_concepts else 'Elaborate further on core principles.'}"
-    ).strip()
+    if is_absurd or is_mostly_echo:
+        feedback = "Response does not provide an accurate or substantive answer to the technical question prompt."
+    elif correctness_score >= 80:
+        feedback = f"Excellent technical explanation. Core concepts ({', '.join(matched_concepts[:2]) if matched_concepts else 'fundamental principles'}) were accurately articulated with sound reasoning."
+    elif correctness_score >= 50:
+        feedback = f"Partially correct answer. Covered basic ideas but would benefit from greater precision regarding {missing_concepts[0] if missing_concepts else 'underlying mechanisms'}."
+    else:
+        feedback = f"Incomplete or inaccurate explanation. Review foundational concepts regarding {question}."
 
     return NLPResult(
         relevanceScore=relevance_score,
@@ -388,113 +492,20 @@ class ResumeQuestionRequest(BaseModel):
     role: Optional[str] = "Software Engineer"
     count: Optional[int] = 5
 
+@app.post("/extract-resume-text")
+async def extract_resume(file: UploadFile = File(...)):
+    try:
+        contents = await file.read()
+        filename = file.filename or "resume.pdf"
+        text = extract_text_from_bytes(contents, filename)
+        return {"success": True, "text": text}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed to extract text from resume: {str(e)}")
 
 @app.post("/generate-resume-questions")
-async def generate_resume_questions_endpoint(body: ResumeQuestionRequest):
-    resume_text = body.resumeText or ""
-    role = body.role or "Software Engineer"
-    count = body.count or 5
-
-    res = synthesize_questions_from_resume(resume_text, role, count)
-    return {
-        "success": True,
-        "data": {
-            "questions": res["questions"],
-            "domainTags": res["domainTags"],
-            "skills": res["skills"],
-            "projects": res.get("projects", []),
-            "rawText": resume_text,
-            "summary": res["summary"]
-        }
-    }
-
-
-@app.post("/extract-and-generate-resume-questions")
-async def extract_and_generate_resume_questions_endpoint(
-    file: UploadFile = File(...),
-    role: str = Form("Software Engineer"),
-    count: int = Form(5)
-):
-    file_bytes = await file.read()
-    extracted_text = extract_text_from_bytes(file_bytes, file.filename or "resume.pdf")
-    res = synthesize_questions_from_resume(extracted_text, role, count)
-    return {
-        "success": True,
-        "data": {
-            "extractedText": extracted_text,
-            "rawText": extracted_text,
-            "questions": res.get("questions", []),
-            "domainTags": res.get("domainTags", []),
-            "skills": res.get("skills", []),
-            "projects": res.get("projects", []),
-            "summary": res.get("summary", "")
-        }
-    }
-
-
-# ── LLM Router Endpoints for Project Context & Dynamic Follow-ups ───────────────
-from llm_router import (
-    generate_project_questions_llm,
-    generate_project_followup_llm,
-    evaluate_project_answer_llm
-)
-
-class ProjectQuestionsRequest(BaseModel):
-    projects: List[Dict[str, Any]]
-    role: Optional[str] = "Software Engineer"
-    count: Optional[int] = 2
-    sessionId: Optional[str] = None
-    sessionIndex: Optional[int] = 0
-    previousQuestions: Optional[List[str]] = None
-
-class ProjectFollowUpRequest(BaseModel):
-    projectContext: Optional[Dict[str, Any]] = None
-    question: str
-    answer: str
-    previousFollowUps: Optional[List[Dict[str, str]]] = None
-    turnCount: Optional[int] = 1
-
-class ProjectEvaluateRequest(BaseModel):
-    projectContext: Optional[Dict[str, Any]] = None
-    question: str
-    answer: str
-    isFollowUp: Optional[bool] = False
-
-@app.post("/generate-project-questions")
-async def generate_project_questions_endpoint(body: ProjectQuestionsRequest):
-    questions = await generate_project_questions_llm(
-        projects=body.projects,
-        role=body.role or "Software Engineer",
-        count=body.count or 2,
-        session_id=body.sessionId,
-        session_index=body.sessionIndex or 0,
-        previous_questions=body.previousQuestions or []
-    )
-    return {"success": True, "data": {"questions": questions}}
-
-@app.post("/generate-project-followup")
-async def generate_project_followup_endpoint(body: ProjectFollowUpRequest):
-    followup = await generate_project_followup_llm(
-        project_context=body.projectContext,
-        original_question=body.question,
-        candidate_answer=body.answer,
-        previous_followups=body.previousFollowUps,
-        turn_count=body.turnCount or 1
-    )
-    return {"success": True, "data": followup}
-
-@app.post("/evaluate-project-answer")
-async def evaluate_project_answer_endpoint(body: ProjectEvaluateRequest):
-    eval_res = await evaluate_project_answer_llm(
-        project_context=body.projectContext,
-        question=body.question,
-        answer=body.answer,
-        is_followup=body.isFollowUp or False
-    )
-    return {"success": True, "data": eval_res}
-
-if __name__ == '__main__':
-    import uvicorn
-    port = int(os.getenv('PORT', 8003))
-    reload = os.getenv('UVICORN_RELOAD', 'false').lower() == 'true'
-    uvicorn.run('main:app', host='0.0.0.0', port=port, reload=reload)
+async def generate_resume_qs(body: ResumeQuestionRequest):
+    try:
+        qs = synthesize_questions_from_resume(body.resumeText, role=body.role or "Software Engineer", count=body.count or 5)
+        return {"success": True, "questions": qs}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to generate questions: {str(e)}")

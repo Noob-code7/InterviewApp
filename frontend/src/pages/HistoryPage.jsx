@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { useNavigate, Link } from "react-router-dom";
+import { useNavigate } from 'react-router-dom';
 import { sessionsApi } from "../api/sessions.js";
 
 export default function HistoryPage() {

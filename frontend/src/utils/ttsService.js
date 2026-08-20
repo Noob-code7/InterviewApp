@@ -24,7 +24,7 @@ function ensureAudioContext() {
     audioContext = new AC();
   }
   if (audioContext.state === "suspended") {
-    audioContext.resume();
+    audioContext.resume().catch(() => {});
   }
   return audioContext;
 }
@@ -45,7 +45,11 @@ function playWav(wav) {
           if (currentAudioSource === source) currentAudioSource = null;
           resolve();
         };
-        source.start();
+        try {
+          source.start();
+        } catch (e) {
+          resolve();
+        }
       },
       () => resolve()
     );
@@ -107,11 +111,14 @@ export function cancelTTS() {
   if (currentAudioSource) {
     try {
       currentAudioSource.stop();
+      currentAudioSource.disconnect();
     } catch (e) {}
     currentAudioSource = null;
   }
   try {
-    window.speechSynthesis?.cancel();
+    if (window.speechSynthesis) {
+      window.speechSynthesis.cancel();
+    }
   } catch (e) {}
 }
 

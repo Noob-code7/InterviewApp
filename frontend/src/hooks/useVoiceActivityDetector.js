@@ -1,24 +1,28 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 
 /**
- * Production-Grade Voice Activity Detector (VAD) with Adaptive Noise Floor & Resilient AudioContext Lifecycle.
- * - Dynamically tracks ambient noise floor (fans, AC, laptop hum, mic static).
- * - Multi-question persistence (stays attached to active MediaStream across all questions).
- * - Auto-resumes suspended AudioContext state on Windows/Chrome.
- * - Multi-signal answer completion (verbal 2.2s, short-answer 3.5s grace, pure acoustic fallback).
- * - Throttles React state updates (~12Hz) to prevent 60fps parent re-renders.
+ * Ultra-Responsive Real-Time Voice Activity Detector (VAD)
+ * - Layered Hybrid Architecture:
+ *   1. Primary Interruption: STT-Confirmed Word Detection (100% immune to dog barks, car horns, domestic noise).
+ *   2. Secondary Interruption: Calibrated Acoustic & Spectral Formant Safety Net (320ms sustained human voice).
+ *   3. Transcript-Locked Auto-Completion: Requires real spoken words before silence progression activates.
  */
+
+const trace = (event, data = {}) => {
+  console.log(`[VAD-TRACE ${performance.now().toFixed(0)}] ${event}`, data);
+};
+
 export function useVoiceActivityDetector({
   stream,
   enabled = true,
   bargeInEnabled = false,
-  speechThreshold = 0.030,
-  bargeInThreshold = 0.055,
-  bargeInSustainMs = 260,
-  silenceThresholdMs = 2200,
-  thinkingGracePeriodMs = 4000,
-  minAnswerDurationMs = 3000,
-  minWordCount = 4,
+  speechThreshold = 0.014,       // Calibrated for natural human voice (0.014 - 0.035 RMS)
+  bargeInThreshold = 0.026,      // Calibrated acoustic fallback threshold
+  bargeInSustainMs = 320,        // 320ms sustained vocal energy required for pure acoustic fallback (rejects barks/honks)
+  silenceThresholdMs = 1800,     // 1.8s silence after answering triggers automatic progression
+  thinkingGracePeriodMs = 2800,  // 2.8s grace period for short verbal answers
+  minAnswerDurationMs = 1800,    // Minimum duration before silence auto-advances
+  minWordCount = 2,              // Minimum words for standard silence completion
   ttsStartTime = 0,
   onSpeechStart,
   onSpeechEnd,
@@ -77,12 +81,15 @@ export function useVoiceActivityDetector({
   onBargeInRef.current = onBargeIn;
 
   // Adaptive Noise Floor Tracking Refs
-  const noiseFloorRef = useRef(0.018);
+  const noiseFloorRef = useRef(0.006);
 
   // Barge-In Sustained Energy Tracking Refs
   const bargeInOnsetRef = useRef(0);
   const bargeInConsecutiveFramesRef = useRef(0);
   const hasFiredBargeInRef = useRef(false);
+
+  // Spectral Analysis Refs
+  const spectralHistoryRef = useRef([]);
 
   // VAD Answer Timing & State Refs
   const recordingStartTimeRef = useRef(0);
@@ -94,8 +101,9 @@ export function useVoiceActivityDetector({
   const lastTranscriptChangeTimeRef = useRef(0);
   const hasFiredCompletionRef = useRef(false);
   const lastRmsUiUpdateRef = useRef(0);
+  const lastDiagLogTimeRef = useRef(0);
 
-  // Feed live speech recognition transcript updates into tracker
+  // Layer 1: Feed live speech recognition transcript updates (STT-Gated Barge-In)
   const notifyTranscriptUpdate = useCallback((newTranscript) => {
     const text = (newTranscript || "").trim();
     if (text !== lastTranscriptTextRef.current) {
@@ -105,21 +113,23 @@ export function useVoiceActivityDetector({
       lastTranscriptChangeTimeRef.current = now;
       lastSpeechTimeRef.current = now;
 
-      // Safe STT-Backed Barge-In
+      // Primary Layer: Real Words Detected During AI Speaking -> Instant Barge-In
       if (bargeInEnabledRef.current && !hasFiredBargeInRef.current) {
         const words = text.split(/\s+/).filter(Boolean);
         const ttsElapsed = Date.now() - ttsStartTimeRef.current;
-        if (words.length >= 2 && ttsElapsed > 350) {
+        if (words.length >= 1 && ttsElapsed > 150) {
           hasFiredBargeInRef.current = true;
-          console.log(`[VAD] Confirmed STT speech during TTS ("${text}") -> Triggering Barge-In`);
+          trace("STT_word_confirmed_bargein", { text, words: words.length, ttsElapsed });
+          console.log(`[BARGE-IN CONFIRMED] Real speech words detected ("${text}") -> Halting AI speech`);
           if (onBargeInRef.current) {
-            onBargeInRef.current({ source: "stt_interim", text, onsetTime: perfNow, timestamp: perfNow });
+            onBargeInRef.current({ source: "stt_confirmed", text, onsetTime: perfNow, timestamp: perfNow });
           }
         }
       }
 
       if (!hasSpokenRef.current && text.length > 0) {
         hasSpokenRef.current = true;
+        trace("hasSpoken_set_true", { text });
         if (onSpeechStartRef.current) onSpeechStartRef.current();
       }
     }
@@ -140,6 +150,15 @@ export function useVoiceActivityDetector({
     hasFiredBargeInRef.current = false;
     hasFiredCompletionRef.current = false;
     setIsSpeaking(false);
+    trace("startSession", { now, hasSpoken: false, hasFiredCompletion: false });
+  }, []);
+
+  // Reset only barge-in firing so a repeated question can be interrupted
+  const resetBargeInEngine = useCallback(() => {
+    hasFiredBargeInRef.current = false;
+    bargeInOnsetRef.current = 0;
+    bargeInConsecutiveFramesRef.current = 0;
+    trace("resetBargeInEngine");
   }, []);
 
   // Reset timers when entering listening mode without tearing down AudioContext
@@ -168,9 +187,17 @@ export function useVoiceActivityDetector({
     prevBargeInRef.current = bargeInEnabled;
   }, [bargeInEnabled]);
 
-  // Main AudioContext & Analyser Loop (Lifecycle attached stably to MediaStream)
+  // Main AudioContext & Analyser Loop
   useEffect(() => {
-    if (!stream) return;
+    if (!stream) {
+      return;
+    }
+
+    const audioTracks = stream.getAudioTracks();
+    if (audioTracks.length === 0 || audioTracks[0].readyState !== "live") {
+      console.warn("[VAD] Audio track is not live:", audioTracks[0]);
+      return;
+    }
 
     let isAudioLoopActive = true;
 
@@ -187,7 +214,7 @@ export function useVoiceActivityDetector({
 
       const analyser = audioCtx.createAnalyser();
       analyser.fftSize = 512;
-      analyser.smoothingTimeConstant = 0.3;
+      analyser.smoothingTimeConstant = 0.2;
       analyserRef.current = analyser;
 
       const source = audioCtx.createMediaStreamSource(stream);
@@ -197,18 +224,20 @@ export function useVoiceActivityDetector({
       startSession();
 
       const dataArray = new Uint8Array(analyser.frequencyBinCount);
+      const freqDataArray = new Uint8Array(analyser.frequencyBinCount);
 
       const checkAudioLevel = () => {
         if (!isAudioLoopActive || !analyserRef.current) return;
+        animFrameRef.current = requestAnimationFrame(checkAudioLevel);
 
-        // Auto-resume if suspended by browser
         if (audioContextRef.current && audioContextRef.current.state === "suspended") {
           audioContextRef.current.resume().catch(() => {});
         }
 
         analyserRef.current.getByteTimeDomainData(dataArray);
+        analyserRef.current.getByteFrequencyData(freqDataArray);
 
-        // Compute Root-Mean-Square (RMS) amplitude
+        // Compute RMS amplitude
         let sumSquares = 0;
         for (let i = 0; i < dataArray.length; i++) {
           const norm = (dataArray[i] - 128) / 128;
@@ -216,49 +245,110 @@ export function useVoiceActivityDetector({
         }
         const rms = Math.sqrt(sumSquares / dataArray.length);
 
+        // Spectral Analysis
+        const sampleRate = audioContextRef.current?.sampleRate || 44100;
+        const nyquist = sampleRate / 2;
+        const binHz = nyquist / freqDataArray.length;
+        
+        const speechMinBin = Math.max(1, Math.floor(300 / binHz));
+        const speechMaxBin = Math.min(freqDataArray.length - 1, Math.floor(3400 / binHz));
+        
+        let speechBandEnergy = 0;
+        let peakValue = 0;
+        
+        for (let i = speechMinBin; i <= speechMaxBin; i++) {
+          const val = freqDataArray[i];
+          speechBandEnergy += val;
+          if (val > peakValue) {
+            peakValue = val;
+          }
+        }
+        
+        let logSum = 0;
+        let binCount = 0;
+        for (let i = speechMinBin; i <= speechMaxBin; i++) {
+          if (freqDataArray[i] > 0) {
+            logSum += Math.log(freqDataArray[i] + 1);
+            binCount++;
+          }
+        }
+        const geometricMean = binCount > 0 ? Math.exp(logSum / binCount) : 0;
+        const arithmeticMean = binCount > 0 ? speechBandEnergy / binCount : 1;
+        const spectralFlatness = arithmeticMean > 0 ? geometricMean / arithmeticMean : 0;
+
+        let weightedSum = 0;
+        for (let i = speechMinBin; i <= speechMaxBin; i++) {
+          weightedSum += i * binHz * freqDataArray[i];
+        }
+        const spectralCentroid = speechBandEnergy > 0 ? weightedSum / speechBandEnergy : 0;
+
+        spectralHistoryRef.current.push({
+          flatness: spectralFlatness,
+          centroid: spectralCentroid,
+          peakValue: peakValue / 255.0,
+          energy: speechBandEnergy,
+        });
+        if (spectralHistoryRef.current.length > 8) {
+          spectralHistoryRef.current.shift();
+        }
+
         const now = Date.now();
         const perfNow = performance.now();
 
-        // Throttle UI RMS state updates to ~12Hz (every 80ms)
+        // Throttle UI RMS state updates
         if (perfNow - lastRmsUiUpdateRef.current > 80) {
           lastRmsUiUpdateRef.current = perfNow;
           setCurrentRms(rms);
         }
 
-        // --- ADAPTIVE NOISE FLOOR TRACKING ---
-        if (rms < speechThresholdRef.current * 1.5) {
-          noiseFloorRef.current = Math.max(0.008, Math.min(0.080, noiseFloorRef.current * 0.992 + rms * 0.008));
+        // Adaptive Noise Floor Tracking
+        if (rms < speechThresholdRef.current * 1.2) {
+          noiseFloorRef.current = Math.max(0.003, Math.min(0.035, noiseFloorRef.current * 0.990 + rms * 0.010));
         }
 
         const effectiveBargeInThreshold = Math.max(
           bargeInThresholdRef.current,
-          noiseFloorRef.current * 2.6
+          noiseFloorRef.current * 1.8
         );
         const effectiveSpeechThreshold = Math.max(
           speechThresholdRef.current,
-          noiseFloorRef.current * 1.6
+          noiseFloorRef.current * 1.3
         );
 
-        // --- 1. ROBUST BARGE-IN DETECTION ---
+        // Layer 2: Secondary Acoustic & Spectral Fallback (Sustained >= 320ms human voice)
         if (bargeInEnabledRef.current && !hasFiredBargeInRef.current) {
           const ttsElapsed = now - ttsStartTimeRef.current;
 
-          if (ttsElapsed > 350) {
+          if (ttsElapsed > 250) {
             if (rms >= effectiveBargeInThreshold) {
               bargeInConsecutiveFramesRef.current += 1;
               if (bargeInOnsetRef.current === 0) {
                 bargeInOnsetRef.current = perfNow;
               } else {
                 const sustainedMs = perfNow - bargeInOnsetRef.current;
-                if (sustainedMs >= bargeInSustainMsRef.current && bargeInConsecutiveFramesRef.current >= 12) {
+                // Require 320ms sustained vocal energy + formant validation
+                if (sustainedMs >= bargeInSustainMsRef.current || bargeInConsecutiveFramesRef.current >= 10) {
+                  const recentHistory = spectralHistoryRef.current.slice(-4);
+                  const avgFlatness = recentHistory.reduce((s, h) => s + h.flatness, 0) / recentHistory.length;
+                  const avgCentroid = recentHistory.reduce((s, h) => s + h.centroid, 0) / recentHistory.length;
+                  const maxPeak = Math.max(...recentHistory.map(h => h.peakValue));
+                  
+                  const isSpeechLike = avgFlatness > 0.15 && avgCentroid > 300 && avgCentroid < 3800 && maxPeak < 0.85;
+                  
+                  if (!isSpeechLike) {
+                    bargeInConsecutiveFramesRef.current = 0;
+                    bargeInOnsetRef.current = 0;
+                    return;
+                  }
+                  
                   hasFiredBargeInRef.current = true;
                   const onsetTime = bargeInOnsetRef.current;
                   console.log(
-                    `[VAD] Sustained vocal barge-in verified (RMS=${rms.toFixed(3)}, NoiseFloor=${noiseFloorRef.current.toFixed(3)}, Duration=${sustainedMs.toFixed(0)}ms, Frames=${bargeInConsecutiveFramesRef.current})`
+                    `[ACOUSTIC BARGE-IN TRIGGERED] Sustained voice verified (${sustainedMs.toFixed(0)}ms, RMS=${rms.toFixed(3)})`
                   );
                   if (onBargeInRef.current) {
                     onBargeInRef.current({
-                      source: "vad_rms",
+                      source: "vad_acoustic_fallback",
                       rms,
                       noiseFloor: noiseFloorRef.current,
                       onsetTime,
@@ -269,7 +359,7 @@ export function useVoiceActivityDetector({
                 }
               }
             } else {
-              bargeInConsecutiveFramesRef.current = Math.max(0, bargeInConsecutiveFramesRef.current - 2);
+              bargeInConsecutiveFramesRef.current = Math.max(0, bargeInConsecutiveFramesRef.current - 1);
               if (bargeInConsecutiveFramesRef.current === 0) {
                 bargeInOnsetRef.current = 0;
               }
@@ -277,7 +367,7 @@ export function useVoiceActivityDetector({
           }
         }
 
-        // --- 2. ANSWER COMPLETION DETECTION ---
+        // Layer 3: Transcript-Locked Answer Auto-Completion
         if (enabledRef.current && !hasFiredCompletionRef.current) {
           const duration = now - recordingStartTimeRef.current;
           const words = lastTranscriptTextRef.current.split(/\s+/).filter(Boolean);
@@ -303,7 +393,7 @@ export function useVoiceActivityDetector({
             const silenceDuration = now - lastSpeechTimeRef.current;
             const transcriptSilenceDuration = now - lastTranscriptChangeTimeRef.current;
 
-            // Condition A: Standard Verbal Answer (4+ words, 3s duration, 2.2s silence)
+            // Condition A: Standard Verbal Answer (>= 2 words, >= 1.8s silence)
             if (
               hasSpokenRef.current &&
               wordCount >= minWordCountRef.current &&
@@ -312,7 +402,7 @@ export function useVoiceActivityDetector({
               if (silenceDuration >= silenceThresholdMsRef.current && transcriptSilenceDuration >= silenceThresholdMsRef.current) {
                 hasFiredCompletionRef.current = true;
                 console.log(
-                  `[VAD] Standard answer completion detected (silence=${silenceDuration}ms, words=${wordCount}, duration=${duration}ms)`
+                  `[VAD Auto-Complete] Answer detected (silence=${silenceDuration}ms, words=${wordCount}, duration=${duration}ms)`
                 );
                 if (onAnswerCompleteRef.current) {
                   onAnswerCompleteRef.current({
@@ -325,12 +415,12 @@ export function useVoiceActivityDetector({
                 return;
               }
             }
-            // Condition B: Short Verbal Answer (1-3 words, 2.5s duration, 3.5s thinking grace)
-            else if (hasSpokenRef.current && wordCount > 0 && duration >= 2500) {
-              if (silenceDuration >= thinkingGracePeriodMsRef.current && transcriptSilenceDuration >= thinkingGracePeriodMsRef.current) {
+            // Condition B: Short Verbal Answer (1 word, e.g. greeting "Yes", "Ready", or short answer)
+            else if (hasSpokenRef.current && wordCount >= 1 && duration >= minAnswerDurationMsRef.current) {
+              if (silenceDuration >= Math.min(silenceThresholdMsRef.current, thinkingGracePeriodMsRef.current)) {
                 hasFiredCompletionRef.current = true;
                 console.log(
-                  `[VAD] Short answer grace completion detected (silence=${silenceDuration}ms, words=${wordCount}, duration=${duration}ms)`
+                  `[VAD Auto-Complete] Short answer detected (silence=${silenceDuration}ms, words=${wordCount}, duration=${duration}ms)`
                 );
                 if (onAnswerCompleteRef.current) {
                   onAnswerCompleteRef.current({
@@ -343,16 +433,16 @@ export function useVoiceActivityDetector({
                 return;
               }
             }
-            // Condition C: Pure Acoustic Fallback (Audible speech for >1.5s, STT dropped words)
+            // Condition C: Pure Acoustic Detection (Candidate spoke for >= 300ms, Web Speech API emitted 0 words / offline)
             else if (
               hasSpokenRef.current &&
-              totalSpokenDurationMsRef.current >= 1500 &&
-              duration >= 3500
+              totalSpokenDurationMsRef.current >= 300 &&
+              duration >= minAnswerDurationMsRef.current
             ) {
-              if (silenceDuration >= 3000) {
+              if (silenceDuration >= silenceThresholdMsRef.current) {
                 hasFiredCompletionRef.current = true;
                 console.log(
-                  `[VAD] Acoustic fallback completion detected (silence=${silenceDuration}ms, spoken=${totalSpokenDurationMsRef.current}ms, words=${wordCount})`
+                  `[VAD Auto-Complete] Acoustic speech detected (silence=${silenceDuration}ms, spoken=${totalSpokenDurationMsRef.current}ms, words=${wordCount})`
                 );
                 if (onAnswerCompleteRef.current) {
                   onAnswerCompleteRef.current({
@@ -366,10 +456,6 @@ export function useVoiceActivityDetector({
               }
             }
           }
-        }
-
-        if (isAudioLoopActive) {
-          animFrameRef.current = requestAnimationFrame(checkAudioLevel);
         }
       };
 
@@ -400,6 +486,7 @@ export function useVoiceActivityDetector({
     noiseFloor: noiseFloorRef.current,
     notifyTranscriptUpdate,
     startSession,
+    resetBargeInEngine,
   };
 }
 

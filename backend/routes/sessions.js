@@ -26,6 +26,7 @@ const statusLimiter = rateLimit({
     if (global > 0) return global
     return process.env.NODE_ENV === 'production' ? 300 : 2000
   })(),
+  skip: () => process.env.NODE_ENV !== "production",
   standardHeaders: true,
   legacyHeaders: false,
   message: {

@@ -1,5 +1,136 @@
 import Question from "../models/Question.js";
 import Session from "../models/Session.js";
+import QuestionHistory from "../models/QuestionHistory.js";
+import {
+  TECHNICAL_QUESTION_BANK,
+  HR_QUESTIONS,
+  getTopicsForRole,
+  getRandomQuestions,
+} from "../data/questionBanks.js";
+import { generateProjectQuestions } from "../services/llmService.js";
+import { sendSuccess, sendError } from "../utils/response.js";
+
+/**
+ * Get user's question history for specific tags
+ * Returns a map of questionId -> history record for quick lookup
+ */
+async function getUserQuestionHistory(userId, tags) {
+  const history = await QuestionHistory.find({
+    userId,
+    tags: { $in: tags },
+  }).lean();
+
+  const historyMap = new Map();
+  for (const record of history) {
+    historyMap.set(record.questionId.toString(), record);
+  }
+  return historyMap;
+}
+
+/**
+ * Smart question selection with per-user history
+ * Priority 1: Never asked questions
+ * Priority 2: Least recently asked, then least frequently asked
+ */
+async function selectQuestionsWithHistory(
+  userId,
+  candidateQuestions,
+  count,
+  tags,
+  sessionId
+) {
+  if (candidateQuestions.length === 0) return [];
+
+  // Get user's question history for these tags
+  const historyMap = await getUserQuestionHistory(userId, tags);
+
+  // Separate questions into unseen and seen
+  const unseenQuestions = [];
+  const seenQuestions = [];
+
+  for (const q of candidateQuestions) {
+    const qId = q._id ? q._id.toString() : q.questionId;
+    if (historyMap.has(qId)) {
+      seenQuestions.push({ question: q, history: historyMap.get(qId) });
+    } else {
+      unseenQuestions.push(q);
+    }
+  }
+
+  // Shuffle unseen questions for randomness
+  const shuffledUnseen = [...unseenQuestions].sort(() => 0.5 - Math.random());
+
+  // If we have enough unseen questions, use them
+  if (shuffledUnseen.length >= count) {
+    return shuffledUnseen.slice(0, count).map((q) => ({
+      ...q,
+      isNew: true,
+    }));
+  }
+
+  // Not enough unseen questions - use all unseen + fill from seen with rotation
+  const selected = [...shuffledUnseen].map((q) => ({ ...q, isNew: true }));
+  const remaining = count - selected.length;
+
+  if (remaining > 0 && seenQuestions.length > 0) {
+    // Sort seen questions by: least recently asked, then least frequently asked
+    seenQuestions.sort((a, b) => {
+      // First: least recently asked (older askedAt comes first)
+      const timeDiff = new Date(a.history.askedAt).getTime() - new Date(b.history.askedAt).getTime();
+      if (timeDiff !== 0) return timeDiff;
+      // Second: least frequently asked
+      return a.history.timesAsked - b.history.timesAsked;
+    });
+
+    // Add from seen questions
+    for (let i = 0; i < remaining && i < seenQuestions.length; i++) {
+      selected.push({
+        ...seenQuestions[i].question,
+        isNew: false,
+        history: seenQuestions[i].history,
+      });
+    }
+  }
+
+  return selected.slice(0, count);
+}
+
+/**
+ * Record question history when questions are genuinely delivered
+ */
+async function recordQuestionHistory(userId, questions, sessionId) {
+  if (!questions || questions.length === 0) return;
+
+  const bulkOps = questions.map((q) => {
+    const qId = q._id ? q._id.toString() : q.questionId;
+    return {
+      updateOne: {
+        filter: { userId, questionId: qId },
+        update: {
+          $inc: { timesAsked: 1 },
+          $set: {
+            questionText: q.questionText,
+            tags: q.tags || [],
+            track: q.track || "subject",
+            askedAt: new Date(),
+          },
+          $setOnInsert: {
+            userId,
+            questionId: q._id,
+          },
+        },
+        upsert: true,
+      };
+    });
+
+  if (bulkOps.length > 0) {
+    await QuestionHistory.bulkWrite(bulkOps, { ordered: false });
+  }
+}
+
+import Question from "../models/Question.js";
+import Session from "../models/Session.js";
+import QuestionHistory from "../models/QuestionHistory.js";
 import {
   TECHNICAL_QUESTION_BANK,
   HR_QUESTIONS,
@@ -26,7 +157,7 @@ export const generateQuestions = async (req, res) => {
         res,
         { session, questions: session.answers },
         200,
-        "Questions already generated",
+        "Questions already generated"
       );
     }
 
@@ -34,6 +165,7 @@ export const generateQuestions = async (req, res) => {
     const role = session.role || "";
     const userCollege = req.user.college || session.college || null;
     const count = session.questionCount || 5;
+    const userId = req.user._id;
 
     // ── Multi-Track Resume Interview Assembly ────────────────────────────────
     if (type === "resume") {
@@ -113,12 +245,19 @@ export const generateQuestions = async (req, res) => {
         const targetSubjectCount = Math.max(1, count - 1 - Math.min(projectQuestions.length || 2, targetProjectCount));
 
         if (subjectDbQuestions.length > 0) {
-          const selectedSubjects = getRandomQuestions(subjectDbQuestions, targetSubjectCount);
+          // Use smart selection for resume mode subject questions
+          const selectedSubjects = await selectQuestionsWithHistory(
+            req.user._id,
+            subjectDbQuestions,
+            targetSubjectCount,
+            ["os", "dbms", "oop", "networking", "ds"],
+            session._id
+          );
           for (const s of selectedSubjects) {
             assembledQuestions.push({
               questionText: s.questionText,
               track: "subject",
-              expectedKeywords: s.keywords || [],
+              expectedKeywords: s.expectedKeywords || [],
               expectedConcepts: s.expectedConcepts || [],
               referenceAnswer: s.referenceAnswer || "",
             });
@@ -258,6 +397,9 @@ export const generateQuestions = async (req, res) => {
         expectedConcepts: q.expectedConcepts || [],
         referenceAnswer: q.referenceAnswer || "",
         isCustom: true,
+        _id: q._id,
+        tags: q.tags,
+        track: q.track,
       }));
     }
 
@@ -269,10 +411,22 @@ export const generateQuestions = async (req, res) => {
         expectedConcepts: q.expectedConcepts || [],
         referenceAnswer: q.referenceAnswer || "",
         isCustom: false,
+        _id: q._id,
+        tags: q.tags,
+        track: q.track,
       }));
 
-      const shuffledDefaults = getRandomQuestions(defaultPool, count - selectedPool.length);
-      selectedPool = [...selectedPool, ...shuffledDefaults];
+      // Use smart selection for default questions
+      const needed = count - selectedPool.length;
+      const smartSelected = await selectQuestionsWithHistory(
+        req.user._id,
+        defaultPool,
+        needed,
+        defaultQuery.tags ? defaultQuery.tags.$in : ["os", "dbms", "oop", "networking", "ds"],
+        session._id
+      );
+
+      selectedPool = [...selectedPool, ...smartSelected];
     }
 
     if (selectedPool.length === 0) {
@@ -294,11 +448,10 @@ export const generateQuestions = async (req, res) => {
       }));
     }
 
-    const finalSelected = getRandomQuestions(selectedPool, count);
+    const finalSelected = selectedPool.slice(0, count);
 
-    while (finalSelected.length < count && selectedPool.length > 0) {
-      finalSelected.push(selectedPool[Math.floor(Math.random() * selectedPool.length)]);
-    }
+    // Record question history for genuinely delivered questions
+    await recordQuestionHistory(req.user._id, finalSelected, session._id);
 
     // Deterministic question IDs keyed by session ID and index
     const answers = finalSelected.map((q, index) => ({
@@ -308,6 +461,7 @@ export const generateQuestions = async (req, res) => {
       expectedKeywords: q.expectedKeywords || [],
       expectedConcepts: q.expectedConcepts || [],
       referenceAnswer: q.referenceAnswer || "",
+      isNew: q.isNew || false,
     }));
 
     // Concurrency Guard: Check if another request finished first

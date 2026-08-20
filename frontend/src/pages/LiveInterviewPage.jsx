@@ -1,9 +1,8 @@
-import React, { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { sessionsApi } from "../api/sessions.js";
 import { interviewApi } from "../api/interview.js";
 import { analysisApi } from "../api/analysis.js";
-import { Button } from "../components/ui/index.js";
 import LiveAudioVisualizer from "../components/ui/LiveAudioVisualizer.jsx";
 import { useVoiceActivityDetector } from "../hooks/useVoiceActivityDetector.js";
 import { speak, cancelTTS, preSynthesize } from "../utils/ttsService.js";
@@ -11,13 +10,15 @@ import {
   INTERVIEW_GREETINGS,
   GREETING_ACKNOWLEDGEMENTS,
   QUESTION_TRANSITIONS,
-  REPEAT_ACKNOWLEDGEMENTS,
   CLOSING_STATEMENTS,
-  INTERRUPTION_INTENTS,
   classifyInterruption,
-  generateClarificationResponse,
   getRandomItem,
 } from "../utils/interviewConversationalPatterns.js";
+
+// Diagnostic trace function
+const trace = (event, data = {}) => {
+  console.log(`[LIVE-TRACE ${performance.now().toFixed(0)}] ${event}`, data);
+};
 
 // Single-Owner Interview State Machine
 export const INTERVIEW_STATES = {
@@ -27,8 +28,6 @@ export const INTERVIEW_STATES = {
   GREETING_ACK: "GREETING_ACK",
   AI_SPEAKING: "AI_SPEAKING",
   LISTENING: "LISTENING",
-  REPEAT_ACK_SPEAKING: "REPEAT_ACK_SPEAKING",
-  CLARIFICATION_SPEAKING: "CLARIFICATION_SPEAKING",
   PROCESSING_ANSWER: "PROCESSING_ANSWER",
   TRANSITION_SPEAKING: "TRANSITION_SPEAKING",
   ADVANCING: "ADVANCING",
@@ -41,8 +40,6 @@ export const isAISpeakingState = (state) =>
   state === INTERVIEW_STATES.GREETING_SPEAKING ||
   state === INTERVIEW_STATES.GREETING_ACK ||
   state === INTERVIEW_STATES.TRANSITION_SPEAKING ||
-  state === INTERVIEW_STATES.REPEAT_ACK_SPEAKING ||
-  state === INTERVIEW_STATES.CLARIFICATION_SPEAKING ||
   state === INTERVIEW_STATES.CLOSING_SPEAKING;
 
 export default function LiveInterviewPage() {
@@ -57,7 +54,7 @@ export default function LiveInterviewPage() {
   const [error, setError] = useState("");
   const [uploading, setUploading] = useState(false);
 
-  // Reactive MediaStream State (Ensures VAD receives stream reference reactively)
+  // Reactive MediaStream State
   const [mediaStream, setMediaStream] = useState(null);
 
   // Single-Owner State Machine State
@@ -66,8 +63,6 @@ export default function LiveInterviewPage() {
   // Conversational Lifecycle Text States
   const [greetingText, setGreetingText] = useState("");
   const [transitionText, setTransitionText] = useState("");
-  const [repeatAckText, setRepeatAckText] = useState("");
-  const [clarificationText, setClarificationText] = useState("");
   const [closingText, setClosingText] = useState("");
   const [lastBargeInLatency, setLastBargeInLatency] = useState(null);
 
@@ -84,7 +79,7 @@ export default function LiveInterviewPage() {
   const [aiSpeaking, setAiSpeaking] = useState(false);
   const [ttsStartTime, setTtsStartTime] = useState(0);
 
-  // Refs for State Synchronization & Hardware Tracks
+  // Hardware & DOM Refs
   const videoRef = useRef(null);
   const streamRef = useRef(null);
   const mediaRecorderRef = useRef(null);
@@ -92,19 +87,48 @@ export default function LiveInterviewPage() {
   const recognizerRef = useRef(null);
   const timerRef = useRef(null);
   const greetingTimeoutRef = useRef(null);
+  const hasInitializedRef = useRef(false);
 
-  // Concurrency & Generation ID Lifecycle Guards
+  // State Mirror Refs (Guarantees fresh data access in async callbacks without re-render cascades)
+  const questionsRef = useRef([]);
+  questionsRef.current = questions;
+
+  const currentQIndexRef = useRef(0);
+  currentQIndexRef.current = currentQuestionIndex;
+
+  const activeFollowUpRef = useRef(null);
+  activeFollowUpRef.current = activeFollowUp;
+
+  const liveTranscriptRef = useRef("");
+  liveTranscriptRef.current = liveTranscript;
+
+  const interviewStateRef = useRef(interviewState);
+  interviewStateRef.current = interviewState;
+
   const isUploadingRef = useRef(false);
   const transitionLockRef = useRef(false);
   const lastSpokenTransitionIndexRef = useRef(-1);
-  const repeatCountRef = useRef(0);
-  const liveTranscriptRef = useRef("");
-  const currentQIndexRef = useRef(currentQuestionIndex);
-  currentQIndexRef.current = currentQuestionIndex;
 
   // Unique Generation ID: Tracks the currently active AI utterance
   const speechGenerationIdRef = useRef(0);
   const ttsStartTimeRef = useRef(0);
+
+  // Target question index that candidate speech belongs to (for continuation of previous question)
+  const continuationTargetQuestionIndexRef = useRef(null);
+
+  // Question index that was interrupted by candidate and must be replayed after continuation
+  const questionToReplayIndexRef = useRef(null);
+
+  // Track whether we're in a barge-in continuation flow
+  const isBargeInContinuationRef = useRef(false);
+
+  // Handler Delegates (Stable function references for decoupling)
+  const startAnswerRecordingRef = useRef(null);
+  const playQuestionTTSRef = useRef(null);
+  const transitionFromGreetingToQ1Ref = useRef(null);
+  const executeQuestionTransitionRef = useRef(null);
+  const executeNaturalClosingRef = useRef(null);
+  const resetBargeInEngineRef = useRef(null);
 
   const currentQ = questions[currentQuestionIndex];
   const displayedQuestionText = activeFollowUp
@@ -112,21 +136,74 @@ export default function LiveInterviewPage() {
     : currentQ?.questionText || "";
 
   // --------------------------------------------------------------------------
+  // Camera & Stream Controls
+  // --------------------------------------------------------------------------
+  const startCamera = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: true,
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+      });
+      streamRef.current = stream;
+      setMediaStream(stream);
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+      }
+      return stream;
+    } catch (err) {
+      setError("Camera/Microphone access denied. Please enable it in browser settings.");
+      return null;
+    }
+  };
+
+  const stopCamera = () => {
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((track) => track.stop());
+      streamRef.current = null;
+      setMediaStream(null);
+    }
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
+  };
+
+  // --------------------------------------------------------------------------
   // Recording Initiation (Starts MediaRecorder, SpeechRecognition & Countdown)
   // --------------------------------------------------------------------------
-  const startAnswerRecording = useCallback((initialText = "") => {
+  const startAnswerRecording = useCallback((initialText = "", isBargeInRecovery = false) => {
     const stream = streamRef.current;
     if (!stream) {
-      console.warn("[InterviewEngine] Cannot start recording: streamRef is null");
+      trace("startAnswerRecording_no_stream");
       return;
     }
 
-    console.log(`[InterviewEngine] Starting answer recording for Question ${currentQIndexRef.current + 1}`);
+    if (!isBargeInRecovery && !isBargeInContinuationRef.current) {
+      // Normal question start - clear any continuation tracking
+      continuationTargetQuestionIndexRef.current = null;
+      questionToReplayIndexRef.current = null;
+      isBargeInContinuationRef.current = false;
+    }
+
+    trace("startAnswerRecording", {
+      questionIndex: currentQIndexRef.current + 1,
+      hasInitialText: !!initialText,
+      isBargeInRecovery,
+      isContinuation: isBargeInContinuationRef.current,
+      targetIndex: continuationTargetQuestionIndexRef.current,
+      replayIndex: questionToReplayIndexRef.current
+    });
 
     try {
       chunksRef.current = [];
-      setLiveTranscript(initialText || "");
-      liveTranscriptRef.current = initialText || "";
+      // Only use initialText if it's a genuine barge-in recovery (not barge-in candidate noise)
+      const transcriptToUse = isBargeInRecovery ? (initialText || "") : "";
+      trace("startAnswerRecording_transcript", { transcriptToUse, isBargeInRecovery });
+      setLiveTranscript(transcriptToUse);
+      liveTranscriptRef.current = transcriptToUse;
 
       let mediaRecorder;
       try {
@@ -229,34 +306,435 @@ export default function LiveInterviewPage() {
     }
   }, []);
 
+  startAnswerRecordingRef.current = startAnswerRecording;
+
+  // --------------------------------------------------------------------------
+  // Question TTS Player Function
+  // --------------------------------------------------------------------------
+  const playQuestionTTS = useCallback((questionIndex, customPrefix = "") => {
+    const qList = questionsRef.current;
+    const q = qList[questionIndex];
+    if (!q) {
+      trace("playQuestionTTS_no_question", { questionIndex });
+      return;
+    }
+
+    // Synchronize UI displayed question state and mirror ref atomically
+    setCurrentQuestionIndex(questionIndex);
+    currentQIndexRef.current = questionIndex;
+
+    const currentGenId = ++speechGenerationIdRef.current;
+    const followUp = activeFollowUpRef.current;
+    const rawQuestionText = followUp ? followUp.questionText : q.questionText;
+    const textToSpeak = customPrefix ? `${customPrefix} ${rawQuestionText}` : rawQuestionText;
+
+    trace("playQuestionTTS_start", { questionIndex: questionIndex + 1, textPreview: textToSpeak.slice(0, 45), genId: currentGenId });
+
+    resetBargeInEngineRef.current?.();
+    setInterviewState(INTERVIEW_STATES.AI_SPEAKING);
+    setAiSpeaking(true);
+    ttsStartTimeRef.current = Date.now();
+    setTtsStartTime(Date.now());
+
+speak(textToSpeak)
+      .then(() => {
+        if (currentGenId !== speechGenerationIdRef.current) {
+          trace("playQuestionTTS_cancelled", { genId: currentGenId, currentGenId: speechGenerationIdRef.current });
+          return;
+        }
+        trace("playQuestionTTS_completed", { genId: currentGenId });
+        setAiSpeaking(false);
+        setInterviewState(INTERVIEW_STATES.LISTENING);
+        // Clear continuation tracking when starting a fresh question
+        continuationTargetQuestionIndexRef.current = null;
+        questionToReplayIndexRef.current = null;
+        isBargeInContinuationRef.current = false;
+        // Record question history when question is genuinely delivered
+        interviewApi.recordQuestionHistory(sessionId, questionsRef.current).catch((err) => {
+          console.warn("[InterviewEngine] Failed to record question history:", err);
+        });
+        vad.startSession?.();
+        startAnswerRecordingRef.current?.();
+      })
+      .catch((err) => {
+        console.warn("[TTS] Speech playback error:", err);
+        if (currentGenId !== speechGenerationIdRef.current) return;
+        trace("playQuestionTTS_error", { err: err?.message });
+        setAiSpeaking(false);
+        setInterviewState(INTERVIEW_STATES.LISTENING);
+        vad.startSession?.();
+        startAnswerRecordingRef.current?.();
+      });
+  }, []);
+
+  playQuestionTTSRef.current = playQuestionTTS;
+
+  // --------------------------------------------------------------------------
+  // Transition from Greeting to Question 1
+  // --------------------------------------------------------------------------
+  const transitionFromGreetingToQ1 = useCallback(() => {
+    trace("transition_greeting_to_q1_start");
+    if (greetingTimeoutRef.current) {
+      clearTimeout(greetingTimeoutRef.current);
+      greetingTimeoutRef.current = null;
+    }
+
+    if (recognizerRef.current) {
+      try {
+        recognizerRef.current.onend = null;
+        recognizerRef.current.stop();
+      } catch (e) {}
+      recognizerRef.current = null;
+    }
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
+      try {
+        mediaRecorderRef.current.stop();
+      } catch (e) {}
+    }
+
+    setIsRecording(false);
+    chunksRef.current = [];
+    setLiveTranscript("");
+    liveTranscriptRef.current = "";
+
+    const ackPhrase = getRandomItem(GREETING_ACKNOWLEDGEMENTS);
+
+    // Clear continuation tracking when starting Question 1
+    continuationTargetQuestionIndexRef.current = null;
+    questionToReplayIndexRef.current = null;
+    isBargeInContinuationRef.current = false;
+
+    // Seamless single utterance: "Great, let's begin. [Question 1 Text]"
+    playQuestionTTSRef.current?.(0, ackPhrase);
+  }, []);
+
+  transitionFromGreetingToQ1Ref.current = transitionFromGreetingToQ1;
+
+  // --------------------------------------------------------------------------
+  // Automatic Question Transition Execution
+  // --------------------------------------------------------------------------
+  const executeQuestionTransition = useCallback((nextIndex) => {
+    trace("execute_question_transition_start", { nextIndex: nextIndex + 1 });
+    if (transitionLockRef.current) return;
+    transitionLockRef.current = true;
+    lastSpokenTransitionIndexRef.current = nextIndex;
+    const currentGenId = ++speechGenerationIdRef.current;
+
+    const chosenTransition = getRandomItem(QUESTION_TRANSITIONS);
+    setTransitionText(chosenTransition);
+    resetBargeInEngineRef.current?.();
+    setInterviewState(INTERVIEW_STATES.TRANSITION_SPEAKING);
+    setAiSpeaking(true);
+    ttsStartTimeRef.current = Date.now();
+    setTtsStartTime(Date.now());
+
+    speak(chosenTransition)
+      .then(() => {
+        if (currentGenId !== speechGenerationIdRef.current) return;
+        setAiSpeaking(false);
+        setCurrentQuestionIndex(nextIndex);
+        setUploading(false);
+        isUploadingRef.current = false;
+        transitionLockRef.current = false;
+        chunksRef.current = [];
+        setLiveTranscript("");
+        liveTranscriptRef.current = "";
+        // Clear continuation tracking when transitioning to next question
+        continuationTargetQuestionIndexRef.current = null;
+        questionToReplayIndexRef.current = null;
+        isBargeInContinuationRef.current = false;
+        // Record question history for the next question
+        interviewApi.recordQuestionHistory(sessionId, questionsRef.current).catch((err) => {
+          console.warn("[InterviewEngine] Failed to record question history:", err);
+        });
+        vad.startSession?.();
+        playQuestionTTSRef.current?.(nextIndex);
+      })
+      .catch(() => {
+        if (currentGenId !== speechGenerationIdRef.current) return;
+        setAiSpeaking(false);
+        setCurrentQuestionIndex(nextIndex);
+        setUploading(false);
+        isUploadingRef.current = false;
+        transitionLockRef.current = false;
+        chunksRef.current = [];
+        setLiveTranscript("");
+        liveTranscriptRef.current = "";
+        // Clear interrupted question index when starting a new question
+        questionToReplayIndexRef.current = null;
+        isBargeInContinuationRef.current = false;
+        vad.startSession?.();
+        playQuestionTTSRef.current?.(nextIndex);
+      });
+  }, []);
+
+  executeQuestionTransitionRef.current = executeQuestionTransition;
+
+  // --------------------------------------------------------------------------
+  // Natural Interview Closing Execution
+  // --------------------------------------------------------------------------
+  // --------------------------------------------------------------------------
+  // Natural Interview Closing Execution
+  // --------------------------------------------------------------------------
+  const executeNaturalClosing = useCallback(async () => {
+    const currentGenId = ++speechGenerationIdRef.current;
+    const chosenClosing = getRandomItem(CLOSING_STATEMENTS);
+    setClosingText(chosenClosing);
+    setInterviewState(INTERVIEW_STATES.CLOSING_SPEAKING);
+    setAiSpeaking(true);
+    ttsStartTimeRef.current = Date.now();
+    setTtsStartTime(Date.now());
+
+    const finalizeAndNavigate = async () => {
+      if (currentGenId !== speechGenerationIdRef.current) return;
+      setAiSpeaking(false);
+      stopCamera();
+      setInterviewState(INTERVIEW_STATES.COMPLETED);
+      try {
+        await sessionsApi.updateStatus(sessionId, "processing");
+      } catch (statusErr) {
+        console.warn("Status update error:", statusErr);
+      }
+      // Check if writing test is enabled for this session
+      const shouldIncludeWriting = session?.includeWritingTest !== false;
+      trace("execute_natural_closing", { shouldIncludeWriting, sessionIncludeWritingTest: session?.includeWritingTest });
+      if (shouldIncludeWriting) {
+        navigate("/interview/writing/" + sessionId);
+      } else {
+        navigate("/interview/processing", { state: { sessionId } });
+      }
+    };
+
+    speak(chosenClosing)
+      .then(finalizeAndNavigate)
+      .catch(finalizeAndNavigate);
+  }, [sessionId, navigate, session]);
+
+  executeNaturalClosingRef.current = executeNaturalClosing;
+
+  // --------------------------------------------------------------------------
+  // Centralized Barge-In Interruption Handler (Active for ALL AI Speech)
+  // --------------------------------------------------------------------------
+  const handleBargeInInterruption = useCallback(
+    ({ source, text, rms, noiseFloor, onsetTime, timestamp }) => {
+      speechGenerationIdRef.current += 1;
+
+      try {
+        cancelTTS();
+      } catch (e) {}
+
+      const tCompleted = performance.now();
+      const referenceOnset = onsetTime || timestamp || tCompleted;
+      const endToEndLatencyMs = Math.max(0, tCompleted - referenceOnset);
+      setLastBargeInLatency(endToEndLatencyMs);
+
+      const currentState = interviewStateRef.current;
+      trace("bargein_confirmed", { source, currentState, rms, text, latencyMs: endToEndLatencyMs });
+
+      setAiSpeaking(false);
+      transitionLockRef.current = false;
+
+      // Determine question association for barge-in:
+      // If AI is reading Q2+ (currentQIndex >= 1) or transitioning between questions,
+      // candidate interruption is a continuation of the preceding question (e.g. Q1).
+      if (currentState === INTERVIEW_STATES.AI_SPEAKING && currentQIndexRef.current > 0) {
+        continuationTargetQuestionIndexRef.current = currentQIndexRef.current - 1; // Belongs to Q1
+        questionToReplayIndexRef.current = currentQIndexRef.current;             // Replay Q2
+        isBargeInContinuationRef.current = true;
+      } else if (currentState === INTERVIEW_STATES.TRANSITION_SPEAKING) {
+        continuationTargetQuestionIndexRef.current = Math.max(0, lastSpokenTransitionIndexRef.current - 1);
+        questionToReplayIndexRef.current = lastSpokenTransitionIndexRef.current;
+        isBargeInContinuationRef.current = true;
+      } else {
+        // Interrupted while reading Question 1 itself: candidate is answering Q1 directly
+        continuationTargetQuestionIndexRef.current = currentQIndexRef.current;
+        questionToReplayIndexRef.current = null;
+        isBargeInContinuationRef.current = false;
+      }
+
+      trace("bargein_question_association", {
+        currentState,
+        currentIndex: currentQIndexRef.current,
+        targetQuestionIndex: continuationTargetQuestionIndexRef.current,
+        questionToReplay: questionToReplayIndexRef.current,
+        isContinuation: isBargeInContinuationRef.current
+      });
+
+      setAiSpeaking(false);
+      transitionLockRef.current = false;
+
+      // Interrupted during greeting
+      if (currentState === INTERVIEW_STATES.GREETING_SPEAKING || currentState === INTERVIEW_STATES.GREETING_ACK) {
+        trace("state_transition", { from: currentState, to: "GREETING_LISTENING" });
+        setInterviewState(INTERVIEW_STATES.GREETING_LISTENING);
+        chunksRef.current = [];
+        setLiveTranscript(text || "");
+        liveTranscriptRef.current = text || "";
+        setIsRecording(true);
+        startAnswerRecordingRef.current?.(text || "", true);
+
+        // Safety: if the candidate just made a barge-in noise but goes quiet,
+        // do not let the greeting stall. Advance to Q1 after a short window.
+        if (greetingTimeoutRef.current) clearTimeout(greetingTimeoutRef.current);
+        greetingTimeoutRef.current = setTimeout(() => {
+          transitionFromGreetingToQ1Ref.current?.();
+        }, 4000);
+        return;
+      }
+
+      // Interrupted during closing
+      if (currentState === INTERVIEW_STATES.CLOSING_SPEAKING) {
+        setInterviewState(INTERVIEW_STATES.COMPLETED);
+        stopCamera();
+        navigate("/interview/processing", { state: { sessionId } });
+        return;
+      }
+
+      // Interrupted during question, transition, or other speaking states
+      trace("state_transition", { from: currentState, to: "LISTENING" });
+      setInterviewState(INTERVIEW_STATES.LISTENING);
+      vad.startSession?.();
+
+      if (text) {
+        const intent = classifyInterruption(text);
+        trace("midquestion_interruption_text", { text, intent });
+        setLiveTranscript(text);
+        liveTranscriptRef.current = text;
+      }
+
+      startAnswerRecordingRef.current?.(text || "", true);
+    },
+    [sessionId, navigate]
+  );
+
+  // --------------------------------------------------------------------------
+  // Barge-In Candidate Handler (RMS triggered, awaiting STT confirmation)
+  // --------------------------------------------------------------------------
+  const handleBargeInCandidate = useCallback(({ source, rms, noiseFloor, onsetTime, timestamp, spectral }) => {
+    const currentState = interviewStateRef.current;
+    trace("bargein_candidate", { currentState, rms, spectral });
+
+    // Clear any existing recovery timeout
+    if (bargeInRecoveryTimeoutRef.current) {
+      clearTimeout(bargeInRecoveryTimeoutRef.current);
+      bargeInRecoveryTimeoutRef.current = null;
+    }
+
+    // If we're in a speaking state, cancel TTS and prepare for potential answer
+    if (isAISpeakingState(currentState)) {
+      try {
+        cancelTTS();
+      } catch (e) {}
+      
+      // Increment generation ID so the pending TTS promise chain is cancelled
+      speechGenerationIdRef.current += 1;
+      trace("generation_id_incremented", { newGenId: speechGenerationIdRef.current });
+      
+      // Determine which question was interrupted
+      let interruptedIndex = null;
+      if (currentState === INTERVIEW_STATES.AI_SPEAKING) {
+        interruptedIndex = currentQIndexRef.current;
+      } else if (currentState === INTERVIEW_STATES.TRANSITION_SPEAKING) {
+        interruptedIndex = Math.max(0, currentQIndexRef.current - 1);
+      }
+      questionToReplayIndexRef.current = interruptedIndex;
+      isBargeInContinuationRef.current = interruptedIndex !== null;
+      
+      trace("bargein_candidate_interrupted_index", { interruptedIndex, currentState });
+      
+      // We don't change state yet - we wait for STT confirmation
+      // The candidate ref in VAD tracks this state
+    }
+  }, []);
+
+  // --------------------------------------------------------------------------
+  // Barge-In Recovery Mechanism
+  // --------------------------------------------------------------------------
+  // If a barge-in candidate expires without STT confirmation, replay the question
+  const bargeInRecoveryTimeoutRef = useRef(null);
+
+  const triggerBargeInRecovery = useCallback(() => {
+    const currentState = interviewStateRef.current;
+    trace("bargein_recovery_triggered", { currentState });
+
+    // Only recover if we're in a state where a question was interrupted
+    if (
+      currentState === INTERVIEW_STATES.LISTENING ||
+      currentState === INTERVIEW_STATES.AI_SPEAKING ||
+      currentState === INTERVIEW_STATES.TRANSITION_SPEAKING ||
+      currentState === INTERVIEW_STATES.GREETING_ACK ||
+      currentState === INTERVIEW_STATES.GREETING_SPEAKING
+    ) {
+      trace("bargein_recovery_executing", { currentState });
+
+      // Add 1.5s delay before replay as per requirement
+      if (bargeInRecoveryTimeoutRef.current) {
+        clearTimeout(bargeInRecoveryTimeoutRef.current);
+      }
+      bargeInRecoveryTimeoutRef.current = setTimeout(() => {
+        trace("bargein_recovery_replay", { currentState });
+
+        // Clear any pending recording
+        if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
+          try {
+            mediaRecorderRef.current.onstop = null;
+            mediaRecorderRef.current.stop();
+          } catch (e) {}
+        }
+        if (recognizerRef.current) {
+          try {
+            recognizerRef.current.onend = null;
+            recognizerRef.current.stop();
+          } catch (e) {}
+          recognizerRef.current = null;
+        }
+
+        // Reset recording state
+        setIsRecording(false);
+        chunksRef.current = [];
+        setLiveTranscript("");
+        liveTranscriptRef.current = "";
+        clearInterval(timerRef.current);
+
+        // Determine what to replay based on state
+        // If we have an interrupted question index, replay that specific question
+        const interruptedIndex = questionToReplayIndexRef.current;
+        if (interruptedIndex !== null) {
+          trace("bargein_recovery_replay_question", { interruptedIndex });
+          playQuestionTTSRef.current?.(interruptedIndex);
+        } else if (currentState === INTERVIEW_STATES.GREETING_SPEAKING || currentState === INTERVIEW_STATES.GREETING_ACK) {
+          // Replay greeting ack then question
+          transitionFromGreetingToQ1Ref.current?.();
+        } else if (currentState === INTERVIEW_STATES.TRANSITION_SPEAKING) {
+          // Replay transition then question
+          executeQuestionTransitionRef.current?.(lastSpokenTransitionIndexRef.current);
+        } else {
+          // Replay current question
+          playQuestionTTSRef.current?.(currentQIndexRef.current);
+        }
+        // Clear the interrupted index after recovery
+        questionToReplayIndexRef.current = null;
+      }, 1500); // 1.5 second delay before replay
+    }
+  }, []);
+
   // --------------------------------------------------------------------------
   // Answer Completion Trigger
   // --------------------------------------------------------------------------
   const triggerAnswerCompletion = useCallback((source = "auto") => {
+    const state = interviewStateRef.current;
     if (
-      interviewState === INTERVIEW_STATES.PROCESSING_ANSWER ||
-      interviewState === INTERVIEW_STATES.ADVANCING ||
-      interviewState === INTERVIEW_STATES.COMPLETED ||
-      interviewState === INTERVIEW_STATES.TRANSITION_SPEAKING ||
-      interviewState === INTERVIEW_STATES.CLOSING_SPEAKING
+      state === INTERVIEW_STATES.PROCESSING_ANSWER ||
+      state === INTERVIEW_STATES.ADVANCING ||
+      state === INTERVIEW_STATES.COMPLETED ||
+      state === INTERVIEW_STATES.TRANSITION_SPEAKING ||
+      state === INTERVIEW_STATES.CLOSING_SPEAKING
     ) {
-      console.log(`[InterviewEngine] Transition/upload in progress, dropping trigger from ${source}`);
+      trace("answer_completion_dropped", { source, state });
       return;
     }
 
-    const intent = classifyInterruption(liveTranscriptRef.current);
-    if (intent === INTERRUPTION_INTENTS.REPEAT_REQUEST) {
-      console.log("[InterviewEngine] Spoken utterance classified as REPEAT_REQUEST. Triggering question replay.");
-      handleRepeatQuestion();
-      return;
-    }
-    if (intent === INTERRUPTION_INTENTS.CLARIFICATION_REQUEST) {
-      console.log("[InterviewEngine] Spoken utterance classified as CLARIFICATION_REQUEST. Triggering clarification.");
-      handleClarificationRequest();
-      return;
-    }
-
-    console.log(`[InterviewEngine] Triggering answer completion from source: ${source}`);
+    trace("answer_completion_triggered", { source, state });
     setInterviewState(INTERVIEW_STATES.PROCESSING_ANSWER);
 
     if (recognizerRef.current) {
@@ -280,166 +758,7 @@ export default function LiveInterviewPage() {
 
     setIsRecording(false);
     clearInterval(timerRef.current);
-  }, [interviewState]);
-
-  // --------------------------------------------------------------------------
-  // Repeat Question Handler
-  // --------------------------------------------------------------------------
-  const handleRepeatQuestion = useCallback(() => {
-    console.log(`[RepeatEngine] Repeating current Question ${currentQIndexRef.current + 1}`);
-    repeatCountRef.current += 1;
-    const currentGenId = ++speechGenerationIdRef.current;
-
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
-      try {
-        mediaRecorderRef.current.onstop = null;
-        mediaRecorderRef.current.stop();
-      } catch (e) {}
-    }
-
-    if (recognizerRef.current) {
-      try {
-        recognizerRef.current.onend = null;
-        recognizerRef.current.stop();
-      } catch (e) {}
-      recognizerRef.current = null;
-    }
-
-    setIsRecording(false);
-    chunksRef.current = [];
-    setLiveTranscript("");
-    liveTranscriptRef.current = "";
-    clearInterval(timerRef.current);
-
-    const chosenAck = getRandomItem(REPEAT_ACKNOWLEDGEMENTS);
-    setRepeatAckText(chosenAck);
-    setInterviewState(INTERVIEW_STATES.REPEAT_ACK_SPEAKING);
-    setAiSpeaking(true);
-    ttsStartTimeRef.current = Date.now();
-    setTtsStartTime(Date.now());
-
-    speak(chosenAck).then(() => {
-      if (currentGenId !== speechGenerationIdRef.current) return;
-      playQuestionTTS(currentQIndexRef.current);
-    }).catch(() => {
-      if (currentGenId !== speechGenerationIdRef.current) return;
-      playQuestionTTS(currentQIndexRef.current);
-    });
   }, []);
-
-  // --------------------------------------------------------------------------
-  // Clarification Request Handler
-  // --------------------------------------------------------------------------
-  const handleClarificationRequest = useCallback(() => {
-    console.log(`[ClarificationEngine] Handling clarification for Question ${currentQIndexRef.current + 1}`);
-    const currentGenId = ++speechGenerationIdRef.current;
-
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
-      try {
-        mediaRecorderRef.current.onstop = null;
-        mediaRecorderRef.current.stop();
-      } catch (e) {}
-    }
-
-    if (recognizerRef.current) {
-      try {
-        recognizerRef.current.onend = null;
-        recognizerRef.current.stop();
-      } catch (e) {}
-      recognizerRef.current = null;
-    }
-
-    const candidateQuery = liveTranscriptRef.current;
-    setIsRecording(false);
-    chunksRef.current = [];
-    setLiveTranscript("");
-    liveTranscriptRef.current = "";
-    clearInterval(timerRef.current);
-
-    const response = generateClarificationResponse(displayedQuestionText, candidateQuery);
-    setClarificationText(response);
-    setInterviewState(INTERVIEW_STATES.CLARIFICATION_SPEAKING);
-    setAiSpeaking(true);
-    ttsStartTimeRef.current = Date.now();
-    setTtsStartTime(Date.now());
-
-    speak(response).then(() => {
-      if (currentGenId !== speechGenerationIdRef.current) return;
-      setAiSpeaking(false);
-      setInterviewState(INTERVIEW_STATES.LISTENING);
-      startAnswerRecording();
-    }).catch(() => {
-      if (currentGenId !== speechGenerationIdRef.current) return;
-      setAiSpeaking(false);
-      setInterviewState(INTERVIEW_STATES.LISTENING);
-      startAnswerRecording();
-    });
-  }, [displayedQuestionText, startAnswerRecording]);
-
-  // --------------------------------------------------------------------------
-  // Centralized Barge-In Interruption Handler (Active for ALL AI Speech)
-  // --------------------------------------------------------------------------
-  const handleBargeInInterruption = useCallback(
-    ({ source, text, rms, noiseFloor, onsetTime, timestamp }) => {
-      speechGenerationIdRef.current += 1;
-
-      try {
-        cancelTTS();
-      } catch (e) {}
-
-      const tCompleted = performance.now();
-      const referenceOnset = onsetTime || timestamp || tCompleted;
-      const endToEndLatencyMs = Math.max(0, tCompleted - referenceOnset);
-      setLastBargeInLatency(endToEndLatencyMs);
-
-      console.log(
-        `[BargeIn Engine] Interrupted during ${interviewState} in ${endToEndLatencyMs.toFixed(1)}ms (Source: ${source}, RMS: ${rms?.toFixed(3) || 'N/A'}, NoiseFloor: ${noiseFloor?.toFixed(3) || 'N/A'})`
-      );
-
-      setAiSpeaking(false);
-      transitionLockRef.current = false;
-
-      // Interrupted during greeting
-      if (interviewState === INTERVIEW_STATES.GREETING_SPEAKING || interviewState === INTERVIEW_STATES.GREETING_ACK) {
-        setInterviewState(INTERVIEW_STATES.GREETING_LISTENING);
-        chunksRef.current = [];
-        setLiveTranscript(text || "");
-        liveTranscriptRef.current = text || "";
-        setIsRecording(true);
-        startAnswerRecording(text || "");
-        return;
-      }
-
-      // Interrupted during closing
-      if (interviewState === INTERVIEW_STATES.CLOSING_SPEAKING) {
-        setInterviewState(INTERVIEW_STATES.COMPLETED);
-        stopCamera();
-        navigate("/interview/processing", { state: { sessionId } });
-        return;
-      }
-
-      // Interrupted during question, transition, repeat ack, or clarification
-      setInterviewState(INTERVIEW_STATES.LISTENING);
-
-      if (text) {
-        const intent = classifyInterruption(text);
-        if (intent === INTERRUPTION_INTENTS.REPEAT_REQUEST) {
-          handleRepeatQuestion();
-          return;
-        }
-        if (intent === INTERRUPTION_INTENTS.CLARIFICATION_REQUEST) {
-          handleClarificationRequest();
-          return;
-        }
-        console.log(`[MidQuestion Engine] Preserving opening answer words: "${text}"`);
-        setLiveTranscript(text);
-        liveTranscriptRef.current = text;
-      }
-
-      startAnswerRecording(text || "");
-    },
-    [interviewState, sessionId, navigate, handleRepeatQuestion, handleClarificationRequest, startAnswerRecording]
-  );
 
   // --------------------------------------------------------------------------
   // Voice Activity Detector Hook
@@ -455,19 +774,33 @@ export default function LiveInterviewPage() {
     stream: mediaStream,
     enabled: isCandidateActiveListening,
     bargeInEnabled: isBargeInActive,
-    speechThreshold: 0.030,
-    bargeInThreshold: 0.055,
-    bargeInSustainMs: 260,
-    silenceThresholdMs: 2200,
-    thinkingGracePeriodMs: 4000,
-    minAnswerDurationMs: interviewState === INTERVIEW_STATES.GREETING_LISTENING ? 1500 : 3000,
-    minWordCount: interviewState === INTERVIEW_STATES.GREETING_LISTENING ? 1 : 4,
+    speechThreshold: 0.012,
+    bargeInThreshold: 0.018,
+    bargeInSustainMs: 120,
+    silenceThresholdMs: 1800,
+    thinkingGracePeriodMs: 3000,
+    minAnswerDurationMs: interviewState === INTERVIEW_STATES.GREETING_LISTENING ? 800 : 1800,
+    minWordCount: interviewState === INTERVIEW_STATES.GREETING_LISTENING ? 1 : 2,
     ttsStartTime,
+    onSpeechStart: () => {
+      // When candidate starts speaking during greeting, set a 3.5s extension so they are not cut off
+      if (interviewStateRef.current === INTERVIEW_STATES.GREETING_LISTENING) {
+        if (greetingTimeoutRef.current) clearTimeout(greetingTimeoutRef.current);
+        greetingTimeoutRef.current = setTimeout(() => {
+          trace("greeting_speech_grace_timeout");
+          transitionFromGreetingToQ1Ref.current?.();
+        }, 3500);
+      }
+    },
     onAnswerComplete: ({ reason, silenceDuration, wordCount, duration }) => {
-      if (interviewState === INTERVIEW_STATES.GREETING_LISTENING) {
+      if (interviewStateRef.current === INTERVIEW_STATES.GREETING_LISTENING) {
         console.log(`[GreetingEngine] Greeting response detected (${wordCount} words, duration ${duration}ms). Transitioning to ack.`);
-        transitionFromGreetingToQ1();
-      } else if (interviewState === INTERVIEW_STATES.LISTENING) {
+        if (greetingTimeoutRef.current) {
+          clearTimeout(greetingTimeoutRef.current);
+          greetingTimeoutRef.current = null;
+        }
+        transitionFromGreetingToQ1Ref.current?.();
+      } else if (interviewStateRef.current === INTERVIEW_STATES.LISTENING) {
         console.log(`[VAD Engine] Auto-completing answer: ${reason} (silence: ${silenceDuration}ms, words: ${wordCount}, duration: ${duration}ms)`);
         triggerAnswerCompletion(`vad_${reason}`);
       }
@@ -475,178 +808,17 @@ export default function LiveInterviewPage() {
     onBargeIn: handleBargeInInterruption,
   });
 
-  // Check live transcript for voice commands (repeat / clarify) while listening
+  const notifyTranscriptUpdateRef = useRef(vad.notifyTranscriptUpdate);
+  notifyTranscriptUpdateRef.current = vad.notifyTranscriptUpdate;
+
+  resetBargeInEngineRef.current = vad.resetBargeInEngine;
+
+  // Forward live transcript updates to VAD for barge-in detection
   useEffect(() => {
     if (liveTranscript) {
-      vad.notifyTranscriptUpdate(liveTranscript);
-
-      if (interviewState === INTERVIEW_STATES.LISTENING) {
-        const intent = classifyInterruption(liveTranscriptRef.current);
-        if (intent === INTERRUPTION_INTENTS.REPEAT_REQUEST) {
-          console.log("[LiveListening] Recognized repeat question command. Triggering repeat.");
-          handleRepeatQuestion();
-        } else if (intent === INTERRUPTION_INTENTS.CLARIFICATION_REQUEST) {
-          console.log("[LiveListening] Recognized clarification request. Triggering clarification.");
-          handleClarificationRequest();
-        }
-      }
+      notifyTranscriptUpdateRef.current?.(liveTranscript);
     }
-  }, [liveTranscript, vad, interviewState, handleRepeatQuestion, handleClarificationRequest]);
-
-  // --------------------------------------------------------------------------
-  // Question TTS Player Function
-  // --------------------------------------------------------------------------
-  const playQuestionTTS = useCallback((questionIndex) => {
-    const q = questions[questionIndex];
-    if (!q) return;
-
-    const currentGenId = ++speechGenerationIdRef.current;
-    const textToSpeak = activeFollowUp ? activeFollowUp.questionText : q.questionText;
-
-    console.log(`[InterviewEngine] Playing Question ${questionIndex + 1} TTS: "${textToSpeak.slice(0, 45)}..."`);
-
-    setInterviewState(INTERVIEW_STATES.AI_SPEAKING);
-    setAiSpeaking(true);
-    ttsStartTimeRef.current = Date.now();
-    setTtsStartTime(Date.now());
-
-    speak(textToSpeak)
-      .then(() => {
-        if (currentGenId !== speechGenerationIdRef.current) return;
-        setAiSpeaking(false);
-        setInterviewState(INTERVIEW_STATES.LISTENING);
-        startAnswerRecording();
-      })
-      .catch((err) => {
-        console.warn("[TTS] Speech playback error:", err);
-        if (currentGenId !== speechGenerationIdRef.current) return;
-        setAiSpeaking(false);
-        setInterviewState(INTERVIEW_STATES.LISTENING);
-        startAnswerRecording();
-      });
-  }, [questions, activeFollowUp, startAnswerRecording]);
-
-  // --------------------------------------------------------------------------
-  // Transition from Greeting to Question 1
-  // --------------------------------------------------------------------------
-  const transitionFromGreetingToQ1 = useCallback(() => {
-    if (greetingTimeoutRef.current) clearTimeout(greetingTimeoutRef.current);
-    const currentGenId = ++speechGenerationIdRef.current;
-
-    if (recognizerRef.current) {
-      try {
-        recognizerRef.current.onend = null;
-        recognizerRef.current.stop();
-      } catch (e) {}
-      recognizerRef.current = null;
-    }
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
-      try {
-        mediaRecorderRef.current.stop();
-      } catch (e) {}
-    }
-
-    setIsRecording(false);
-    chunksRef.current = [];
-    setLiveTranscript("");
-    liveTranscriptRef.current = "";
-    setInterviewState(INTERVIEW_STATES.GREETING_ACK);
-    setAiSpeaking(true);
-    ttsStartTimeRef.current = Date.now();
-    setTtsStartTime(Date.now());
-
-    const ackPhrase = getRandomItem(GREETING_ACKNOWLEDGEMENTS);
-
-    speak(ackPhrase)
-      .then(() => {
-        if (currentGenId !== speechGenerationIdRef.current) return;
-        playQuestionTTS(0);
-      })
-      .catch(() => {
-        if (currentGenId !== speechGenerationIdRef.current) return;
-        playQuestionTTS(0);
-      });
-  }, [playQuestionTTS]);
-
-  // --------------------------------------------------------------------------
-  // Automatic Question Transition Execution
-  // --------------------------------------------------------------------------
-  const executeQuestionTransition = useCallback(
-    (nextIndex) => {
-      if (transitionLockRef.current) return;
-      transitionLockRef.current = true;
-      lastSpokenTransitionIndexRef.current = nextIndex;
-      const currentGenId = ++speechGenerationIdRef.current;
-
-      const chosenTransition = getRandomItem(QUESTION_TRANSITIONS);
-      setTransitionText(chosenTransition);
-      setInterviewState(INTERVIEW_STATES.TRANSITION_SPEAKING);
-      setAiSpeaking(true);
-      ttsStartTimeRef.current = Date.now();
-      setTtsStartTime(Date.now());
-
-      speak(chosenTransition)
-        .then(() => {
-          if (currentGenId !== speechGenerationIdRef.current) return;
-          setAiSpeaking(false);
-          setCurrentQuestionIndex(nextIndex);
-          setUploading(false);
-          isUploadingRef.current = false;
-          transitionLockRef.current = false;
-          chunksRef.current = [];
-          setLiveTranscript("");
-          liveTranscriptRef.current = "";
-          playQuestionTTS(nextIndex);
-        })
-        .catch(() => {
-          if (currentGenId !== speechGenerationIdRef.current) return;
-          setAiSpeaking(false);
-          setCurrentQuestionIndex(nextIndex);
-          setUploading(false);
-          isUploadingRef.current = false;
-          transitionLockRef.current = false;
-          chunksRef.current = [];
-          setLiveTranscript("");
-          liveTranscriptRef.current = "";
-          playQuestionTTS(nextIndex);
-        });
-    },
-    [playQuestionTTS]
-  );
-
-  // --------------------------------------------------------------------------
-  // Natural Interview Closing Execution
-  // --------------------------------------------------------------------------
-  const executeNaturalClosing = useCallback(async () => {
-    const currentGenId = ++speechGenerationIdRef.current;
-    const chosenClosing = getRandomItem(CLOSING_STATEMENTS);
-    setClosingText(chosenClosing);
-    setInterviewState(INTERVIEW_STATES.CLOSING_SPEAKING);
-    setAiSpeaking(true);
-    ttsStartTimeRef.current = Date.now();
-    setTtsStartTime(Date.now());
-
-    const finalizeAndNavigate = async () => {
-      if (currentGenId !== speechGenerationIdRef.current) return;
-      setAiSpeaking(false);
-      stopCamera();
-      setInterviewState(INTERVIEW_STATES.COMPLETED);
-      if (session?.includeWritingTest) {
-        navigate(`/interview/writing/${sessionId}`);
-        return;
-      }
-      try {
-        await sessionsApi.updateStatus(sessionId, "processing");
-      } catch (statusErr) {
-        console.warn("Status update error:", statusErr);
-      }
-      navigate("/interview/processing", { state: { sessionId } });
-    };
-
-    speak(chosenClosing)
-      .then(finalizeAndNavigate)
-      .catch(finalizeAndNavigate);
-  }, [sessionId, navigate, session]);
+  }, [liveTranscript]);
 
   // --------------------------------------------------------------------------
   // Handle Answer Upload & Automatic Progression
@@ -658,7 +830,13 @@ export default function LiveInterviewPage() {
 
     try {
       const blob = new Blob(chunksRef.current, { type: "video/webm" });
-      const currentQ = questions[currentQIndexRef.current];
+      
+      // If this is a continuation of previous question, associate with continuation target
+      const isContinuation = isBargeInContinuationRef.current;
+      const questionIndex = (isContinuation && continuationTargetQuestionIndexRef.current !== null)
+        ? continuationTargetQuestionIndexRef.current
+        : currentQIndexRef.current;
+      const currentQ = questionsRef.current[questionIndex];
       const currentAnswerText = liveTranscriptRef.current || "";
 
       if (!currentQ) {
@@ -666,16 +844,23 @@ export default function LiveInterviewPage() {
         return;
       }
 
+      trace("handleUpload", {
+        questionIndex,
+        isContinuation,
+        targetQuestionId: currentQ.questionId,
+        questionToReplay: questionToReplayIndexRef.current
+      });
+
       // 1. Upload Video Chunk
-      if (activeFollowUp) {
+      if (activeFollowUpRef.current) {
         await interviewApi.uploadAnswer(sessionId, currentQ.questionId, blob, {
           isFollowUp: true,
           turn: followUpTurn,
-          questionText: activeFollowUp.questionText,
+          questionText: activeFollowUpRef.current.questionText,
         });
       } else {
         await interviewApi.uploadAnswer(sessionId, currentQ.questionId, blob, {
-          questionIndex: currentQIndexRef.current,
+          questionIndex,
           questionText: currentQ.questionText,
         });
       }
@@ -685,7 +870,7 @@ export default function LiveInterviewPage() {
         const fd = new FormData();
         fd.append("audio", blob, "answer.webm");
         fd.append("sessionId", sessionId);
-        fd.append("questionId", activeFollowUp ? `${currentQ.questionId}-followup-${followUpTurn}` : currentQ.questionId);
+        fd.append("questionId", activeFollowUpRef.current ? `${currentQ.questionId}-followup-${followUpTurn}` : currentQ.questionId);
         fd.append("clientTranscript", currentAnswerText);
         if (currentQ.expectedKeywords) {
           fd.append("keywords", JSON.stringify(currentQ.expectedKeywords));
@@ -704,14 +889,14 @@ export default function LiveInterviewPage() {
           const currentFollowUpList = [
             ...previousFollowUps,
             {
-              question: activeFollowUp?.questionText || currentQ.questionText,
+              question: activeFollowUpRef.current?.questionText || currentQ.questionText,
               answer: currentAnswerText,
             },
           ];
 
           const res = await sessionsApi.generateProjectFollowUp(sessionId, {
             questionId: currentQ.questionId,
-            questionText: activeFollowUp?.questionText || currentQ.questionText,
+            questionText: activeFollowUpRef.current?.questionText || currentQ.questionText,
             answerText: currentAnswerText,
             projectContext: currentQ.projectContext || {},
             turnCount: followUpTurn + 1,
@@ -723,13 +908,14 @@ export default function LiveInterviewPage() {
             setPreviousFollowUps(currentFollowUpList);
             setFollowUpTurn((prev) => prev + 1);
             setActiveFollowUp(nextFollowUp);
+            activeFollowUpRef.current = nextFollowUp;
             setIsFollowUpLoading(false);
             setUploading(false);
             isUploadingRef.current = false;
             chunksRef.current = [];
             setLiveTranscript("");
             liveTranscriptRef.current = "";
-            playQuestionTTS(currentQIndexRef.current);
+            playQuestionTTSRef.current?.(currentQIndexRef.current);
             return;
           }
         } catch (fErr) {
@@ -741,55 +927,54 @@ export default function LiveInterviewPage() {
       // 4. Automatic Question Progression or Natural Closing
       setFollowUpTurn(0);
       setActiveFollowUp(null);
+      activeFollowUpRef.current = null;
       setPreviousFollowUps([]);
 
-      const nextIndex = currentQIndexRef.current + 1;
+      // Capture continuation parameters before resetting
+      const wasContinuation = isBargeInContinuationRef.current;
+      const replayIndex = questionToReplayIndexRef.current;
 
-      if (nextIndex < questions.length) {
-        console.log(`[InterviewEngine] Auto-transitioning to Question ${nextIndex + 1} of ${questions.length}`);
-        executeQuestionTransition(nextIndex);
+      // Clear continuation state
+      isBargeInContinuationRef.current = false;
+      continuationTargetQuestionIndexRef.current = null;
+      questionToReplayIndexRef.current = null;
+
+      if (wasContinuation && replayIndex !== null) {
+        // Candidate finished answering continuation for preceding question.
+        // Replay Question 2 with an acknowledgment prefix in a single seamless utterance.
+        trace("bargein_continuation_complete", { replayIndex });
+
+        const acknowledgments = ["Okay, got it.", "Alright, understood.", "Got it, thanks."];
+        const acknowledgment = acknowledgments[Math.floor(Math.random() * acknowledgments.length)];
+
+        chunksRef.current = [];
+        setLiveTranscript("");
+        liveTranscriptRef.current = "";
+
+        // Single seamless conversational handoff: "Okay, got it. [Question 2 Text]"
+        playQuestionTTSRef.current?.(replayIndex, acknowledgment);
       } else {
-        console.log(`[InterviewEngine] All ${questions.length} questions completed. Starting Natural Closing...`);
-        executeNaturalClosing();
+        // Normal flow - proceed to next question or closing
+        setFollowUpTurn(0);
+        setActiveFollowUp(null);
+        activeFollowUpRef.current = null;
+        setPreviousFollowUps([]);
+
+        const nextIndex = currentQIndexRef.current + 1;
+
+        if (nextIndex < questionsRef.current.length) {
+          trace("auto_transition_next_question", { nextIndex: nextIndex + 1 });
+          executeQuestionTransitionRef.current?.(nextIndex);
+        } else {
+          trace("all_questions_completed", { totalQuestions: questionsRef.current.length });
+          executeNaturalClosingRef.current?.();
+        }
       }
-    } catch (err) {
-      console.error("Upload error:", err);
-      setError("Failed to upload answer. Moving forward...");
+    } catch (uploadErr) {
+      console.error("[InterviewEngine] Error during answer upload:", uploadErr);
     } finally {
-      isUploadingRef.current = false;
       setUploading(false);
-    }
-  };
-
-  // --------------------------------------------------------------------------
-  // Camera & Stream Controls
-  // --------------------------------------------------------------------------
-  const startCamera = async () => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: true,
-        audio: true,
-      });
-      streamRef.current = stream;
-      setMediaStream(stream);
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-      }
-      return stream;
-    } catch (err) {
-      setError("Camera/Microphone access denied. Please enable it in browser settings.");
-      return null;
-    }
-  };
-
-  const stopCamera = () => {
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach((track) => track.stop());
-      streamRef.current = null;
-      setMediaStream(null);
-    }
-    if (videoRef.current) {
-      videoRef.current.srcObject = null;
+      isUploadingRef.current = false;
     }
   };
 
@@ -797,25 +982,26 @@ export default function LiveInterviewPage() {
   // Session Initialization & Welcome Greeting Execution
   // --------------------------------------------------------------------------
   useEffect(() => {
-    let isMounted = true;
+    let isCancelled = false;
 
     const init = async () => {
       try {
         const { data } = await sessionsApi.get(sessionId);
-        const fetchedSession = data?.data?.session;
+        if (isCancelled) return;
 
+        const fetchedSession = data?.data?.session;
         if (!fetchedSession) {
-          if (isMounted) {
-            setError("Session not found");
-            setLoading(false);
-          }
+          setError("Session not found");
+          setLoading(false);
           return;
         }
 
-        if (isMounted) setSession(fetchedSession);
+        setSession(fetchedSession);
 
         // Fetch or generate questions
         const qRes = await interviewApi.generateQuestions(sessionId);
+        if (isCancelled) return;
+
         const fetchedQuestions =
           qRes.data?.data?.questions ||
           qRes.data?.data?.session?.answers ||
@@ -823,86 +1009,86 @@ export default function LiveInterviewPage() {
           [];
 
         if (fetchedQuestions.length === 0) {
-          if (isMounted) {
-            setError("No interview questions available for this session.");
-            setLoading(false);
-          }
+          setError("No interview questions available for this session.");
+          setLoading(false);
           return;
         }
 
         const chosenGreeting = getRandomItem(INTERVIEW_GREETINGS);
-        if (isMounted) {
-          setQuestions(fetchedQuestions);
-          setGreetingText(chosenGreeting);
-          setLoading(false);
-        }
+        setQuestions(fetchedQuestions);
+        questionsRef.current = fetchedQuestions;
+        setGreetingText(chosenGreeting);
+        setLoading(false);
 
         preSynthesize(chosenGreeting);
         [
           ...GREETING_ACKNOWLEDGEMENTS,
           ...QUESTION_TRANSITIONS,
-          ...REPEAT_ACKNOWLEDGEMENTS,
           ...CLOSING_STATEMENTS,
         ].forEach((phrase) => preSynthesize(phrase));
 
         await startCamera();
+        if (isCancelled) return;
 
         // Start Greeting Delivery after camera is initialized
-        if (isMounted) {
-          const currentGenId = ++speechGenerationIdRef.current;
-          setInterviewState(INTERVIEW_STATES.GREETING_SPEAKING);
-          setAiSpeaking(true);
-          ttsStartTimeRef.current = Date.now();
-          setTtsStartTime(Date.now());
+        const currentGenId = ++speechGenerationIdRef.current;
+        setInterviewState(INTERVIEW_STATES.GREETING_SPEAKING);
+        setAiSpeaking(true);
+        ttsStartTimeRef.current = Date.now();
+        setTtsStartTime(Date.now());
 
-          const startGreetingListening = () => {
-            if (currentGenId !== speechGenerationIdRef.current) return;
-            setAiSpeaking(false);
-            setInterviewState(INTERVIEW_STATES.GREETING_LISTENING);
-            chunksRef.current = [];
-            setLiveTranscript("");
-            liveTranscriptRef.current = "";
-            setIsRecording(true);
+        const startGreetingListening = () => {
+          if (isCancelled || currentGenId !== speechGenerationIdRef.current) return;
+          setAiSpeaking(false);
+          setInterviewState(INTERVIEW_STATES.GREETING_LISTENING);
+          chunksRef.current = [];
+          setLiveTranscript("");
+          liveTranscriptRef.current = "";
+          setIsRecording(true);
 
-            greetingTimeoutRef.current = setTimeout(() => {
-              transitionFromGreetingToQ1();
-            }, 4500);
-          };
+          // Greeting inactivity fallback: 4.5 seconds if candidate stays silent
+          greetingTimeoutRef.current = setTimeout(() => {
+            if (!isCancelled) {
+              trace("greeting_timeout_fallback", { reason: "max_greeting_time_reached" });
+              transitionFromGreetingToQ1Ref.current?.();
+            }
+          }, 4500);
+        };
 
-          speak(chosenGreeting)
-            .then(startGreetingListening)
-            .catch(startGreetingListening);
-        }
+        speak(chosenGreeting)
+          .then(startGreetingListening)
+          .catch(startGreetingListening);
       } catch (err) {
+        if (isCancelled) return;
         if (err.response?.status === 401) {
           navigate("/login");
           return;
         } else if (err.response?.status === 404) {
-          if (isMounted) setError("Interview session not found");
+          setError("Interview session not found");
         } else {
-          if (isMounted) setError(err.response?.data?.error || "Failed to load interview session");
+          setError(err.response?.data?.error || "Failed to load interview session");
         }
-        if (isMounted) setLoading(false);
+        setLoading(false);
       }
     };
 
     init();
 
     return () => {
-      isMounted = false;
+      isCancelled = true;
       stopCamera();
       clearInterval(timerRef.current);
       if (greetingTimeoutRef.current) clearTimeout(greetingTimeoutRef.current);
       cancelTTS();
     };
-  }, [sessionId, navigate, transitionFromGreetingToQ1]);
+  }, [sessionId, navigate]);
 
-  // Bind video element whenever loading finishes or stream is ready
+  // Bind video element whenever mediaStream is ready
   useEffect(() => {
-    if (!loading && videoRef.current && streamRef.current) {
-      videoRef.current.srcObject = streamRef.current;
+    if (videoRef.current && mediaStream) {
+      videoRef.current.srcObject = mediaStream;
     }
-  }, [loading, mediaStream]);
+  }, [mediaStream]);
 
   const formatTime = (seconds) => {
     const mins = Math.floor(seconds / 60);
@@ -1025,14 +1211,6 @@ export default function LiveInterviewPage() {
                   <div className="font-mono text-[10px] text-emerald-400 tracking-widest uppercase mb-2 animate-pulse">
                     AI Interview Concluded
                   </div>
-                ) : interviewState === INTERVIEW_STATES.CLARIFICATION_SPEAKING ? (
-                  <div className="font-mono text-[10px] text-emerald-400 tracking-widest uppercase mb-2 animate-pulse">
-                    AI Question Clarification
-                  </div>
-                ) : interviewState === INTERVIEW_STATES.REPEAT_ACK_SPEAKING ? (
-                  <div className="font-mono text-[10px] text-amber-400 tracking-widest uppercase mb-2 animate-pulse">
-                    AI Repeating Question
-                  </div>
                 ) : interviewState === INTERVIEW_STATES.TRANSITION_SPEAKING ? (
                   <div className="font-mono text-[10px] text-[#1D5DFF] tracking-widest uppercase mb-2">
                     AI Transition Bridge
@@ -1048,7 +1226,7 @@ export default function LiveInterviewPage() {
                 )}
 
                 <h2 className="text-base lg:text-lg font-bold text-[#F0EEE8] leading-relaxed">
-                  "{interviewState === INTERVIEW_STATES.INITIALIZING || interviewState === INTERVIEW_STATES.GREETING_SPEAKING || interviewState === INTERVIEW_STATES.GREETING_LISTENING || interviewState === INTERVIEW_STATES.GREETING_ACK ? greetingText : interviewState === INTERVIEW_STATES.CLOSING_SPEAKING ? closingText : interviewState === INTERVIEW_STATES.CLARIFICATION_SPEAKING ? clarificationText : interviewState === INTERVIEW_STATES.REPEAT_ACK_SPEAKING ? repeatAckText : interviewState === INTERVIEW_STATES.TRANSITION_SPEAKING ? transitionText : displayedQuestionText}"
+                  "{interviewState === INTERVIEW_STATES.INITIALIZING || interviewState === INTERVIEW_STATES.GREETING_SPEAKING || interviewState === INTERVIEW_STATES.GREETING_LISTENING || interviewState === INTERVIEW_STATES.GREETING_ACK ? greetingText : interviewState === INTERVIEW_STATES.CLOSING_SPEAKING ? closingText : interviewState === INTERVIEW_STATES.TRANSITION_SPEAKING ? transitionText : displayedQuestionText}"
                 </h2>
               </div>
 
@@ -1077,6 +1255,7 @@ export default function LiveInterviewPage() {
 
                 <div className="h-10 bg-[#0D0D0C] border border-[#2A2A28] rounded-lg flex items-center justify-center px-4">
                   <LiveAudioVisualizer
+                    audioStream={mediaStream}
                     isRecording={isRecording || isBargeInActive}
                     isSpeaking={vad.isSpeaking}
                     rms={vad.currentRms}
@@ -1095,14 +1274,10 @@ export default function LiveInterviewPage() {
                         ? "(Say hello or ready to get started...)"
                         : interviewState === INTERVIEW_STATES.CLOSING_SPEAKING
                         ? "(Finalizing session results...)"
-                        : interviewState === INTERVIEW_STATES.CLARIFICATION_SPEAKING
-                        ? "(AI providing brief clarification...)"
-                        : interviewState === INTERVIEW_STATES.REPEAT_ACK_SPEAKING
-                        ? "(Preparing to repeat question...)"
                         : interviewState === INTERVIEW_STATES.TRANSITION_SPEAKING
                         ? "(Transitioning to next question...)"
                         : isRecording
-                        ? "(Speak your answer naturally... or ask 'Can you repeat?' / 'Can you clarify?')"
+                        ? "(Speak your answer naturally...)"
                         : isFollowUpLoading
                         ? "Formulating project follow-up question..."
                         : uploading
@@ -1145,16 +1320,6 @@ export default function LiveInterviewPage() {
                     <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
                     Interview Concluded — Generating Report
                   </div>
-                ) : interviewState === INTERVIEW_STATES.CLARIFICATION_SPEAKING ? (
-                  <div className="w-full py-3 bg-[#161615] text-emerald-400 rounded-xl font-mono text-xs tracking-wider uppercase border border-emerald-500/40 flex items-center justify-center gap-2">
-                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-                    AI Clarifying Question
-                  </div>
-                ) : interviewState === INTERVIEW_STATES.REPEAT_ACK_SPEAKING ? (
-                  <div className="w-full py-3 bg-[#161615] text-amber-400 rounded-xl font-mono text-xs tracking-wider uppercase border border-amber-500/40 flex items-center justify-center gap-2">
-                    <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
-                    Repeating Question
-                  </div>
                 ) : interviewState === INTERVIEW_STATES.TRANSITION_SPEAKING ? (
                   <div className="w-full py-3 bg-[#161615] text-[#1D5DFF] rounded-xl font-mono text-xs tracking-wider uppercase border border-blue-900/40 flex items-center justify-center gap-2">
                     <span className="w-2 h-2 rounded-full bg-[#1D5DFF] animate-pulse" />
@@ -1179,12 +1344,6 @@ export default function LiveInterviewPage() {
 
                     {/* Secondary Fallback Controls (Accessible, non-intrusive) */}
                     <div className="flex justify-between items-center px-1 pt-1">
-                      <button
-                        onClick={handleRepeatQuestion}
-                        className="text-[11px] font-mono text-[#6E6D68] hover:text-amber-400 transition-colors flex items-center gap-1"
-                      >
-                        <span>↺ Repeat Question</span>
-                      </button>
                       <button
                         onClick={() => triggerAnswerCompletion("manual_done")}
                         className="text-[11px] font-mono text-[#6E6D68] hover:text-[#F0EEE8] transition-colors flex items-center gap-1"

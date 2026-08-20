@@ -16,6 +16,7 @@ import writingRoutes from "./routes/writing.js";
 import reportRoutes from "./routes/reports.js";
 import storageRoutes from "./routes/storage.js";
 import ttsRoutes from "./routes/tts.js";
+import questionHistoryRoutes from "./routes/questionHistory.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -44,8 +45,9 @@ const globalLimiter = rateLimit({
   windowMs: Number(process.env.RATE_LIMIT_WINDOW_MS) || 15 * 60 * 1000,
   max: (() => {
     const configured = Number(process.env.RATE_LIMIT_MAX);
-    return configured > 0 ? configured : isDev ? 2000 : 300;
+    return configured > 0 ? configured : isDev ? 50000 : 300;
   })(),
+  skip: () => isDev,
   standardHeaders: true,
   legacyHeaders: false,
   message: {
@@ -97,6 +99,8 @@ app.use("/api/storage", storageRoutes);
 app.use("/api/tts", ttsRoutes);
 // Admin routes (faculty can manage question banks)
 app.use("/api/admin", adminRoutes);
+// Question history routes (per-user question tracking)
+app.use("/api/question-history", questionHistoryRoutes);
 
 // ── Route stubs — filled in per phase ─────────────────────────────────────────
 // Phase 6:  app.use('/api/writing', writingRoutes)
