@@ -1,4 +1,4 @@
-﻿import fs from 'fs'
+import fs from 'fs'
 import path from 'path'
 import { fileURLToPath } from 'url'
 import Session from '../models/Session.js'
@@ -23,6 +23,7 @@ export const createSession = async (req, res) => {
       graduationYear,
       resumeText,
       resumeUrl,
+      includeWritingTest,
     } = req.body
     if (!role || !interviewType) {
       return sendError(res, 'role and interviewType are required', 400)
@@ -39,6 +40,7 @@ export const createSession = async (req, res) => {
       questionCount: questionCount || 5,
       resumeText: resumeText || '',
       resumeUrl: resumeUrl || '',
+      includeWritingTest: typeof includeWritingTest === 'boolean' ? includeWritingTest : true,
       status: 'setup',
     })
 

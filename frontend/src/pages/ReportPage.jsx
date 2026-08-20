@@ -267,6 +267,7 @@ export default function ReportPage() {
             </div>
 
             {/* Technical Writing */}
+            {report.includeWritingTest !== false && (
             <div className="bg-white border border-[#E0DFD9] rounded-2xl p-5 flex flex-col justify-between shadow-sm hover:shadow-md hover:border-[#1D5DFF]/40 hover:-translate-y-0.5 transition-all duration-200 group">
               <div className="flex items-center justify-between">
                 <span className="font-mono text-[10px] font-bold text-[#6E6D68] uppercase tracking-wider">
@@ -287,6 +288,7 @@ export default function ReportPage() {
               </div>
               <span className="text-xs text-[#6E6D68] font-inter">Grammar, logical flow & technical explanation</span>
             </div>
+            )}
 
           </div>
         </div>

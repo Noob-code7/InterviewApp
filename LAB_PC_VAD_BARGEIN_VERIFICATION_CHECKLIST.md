@@ -1,87 +1,64 @@
-# Lab-PC VAD / Barge-In Verification Checklist (WS2.8)
+# Lab-PC VAD / Barge-In & Conversational Flow Physical Verification Checklist
 
-Real-device verification path for the Voice Activity Detection and Barge-In behavior of the
-Continuous Conversational Interview Flow. Must be executed on a physical lab PC with a
-working microphone and speakers (no headset echo-cancellation features disabled) against a
-running full stack (backend + NLP + voice + face + frontend dev server).
+This document provides the step-by-step verification protocol for testing the **Continuous Conversational AI Interview Flow** on a **physical machine** equipped with a real microphone and speakers (e.g. laptop or lab PC with ambient room noise, fan, or AC running).
 
-## Under-test code (ground truth for the pass criteria)
+---
 
-- `frontend/src/hooks/useVoiceActivityDetector.js`
-  - `silenceThresholdMs = 2200` — sustained RMS below `speechThreshold` for this long ends the turn.
-  - `thinkingGracePeriodMs = 4000` — silence allowed while the interviewer is "thinking" before auto-advance.
-  - `bargeInThreshold = 0.038` with `bargeInSustainMs = 120` — audio-level barge-in during TTS.
-  - `minAnswerDurationMs = 3000` — minimum recorded answer length accepted.
-  - STT-backed barge-in: a Web Speech interim transcript with `text.length > 0` during TTS fires
-    `onBargeIn({ source: "stt_interim", ... })` (see `useVoiceActivityDetector.js:93`).
-- `frontend/src/pages/LiveInterviewPage.jsx` — `classifyInterruption` routes barge-ins to
-  clarification/answer handling; routing after interview goes to `/interview/processing`.
+## 1. Ground-Truth Runtime Architecture Under Test
 
-## Environment prep
+* **Adaptive Noise-Floor VAD**: [`frontend/src/hooks/useVoiceActivityDetector.js`](file:///C:/Workspace/Workspace/InterviewApp/frontend/src/hooks/useVoiceActivityDetector.js)
+  * Dynamic Noise Floor Tracking: Exponential moving average tracks ambient room noise (0.008 - 0.080 RMS).
+  * Adaptive Barge-In Threshold: `Math.max(0.055, noiseFloor * 2.6)` with `bargeInSustainMs = 260ms` and consecutive vocal frame accumulator.
+  * TTS Startup Cooldown: Ignores microphone audio during first 350ms of AI TTS playback to eliminate speaker acoustic bleed and turn-on pop.
+  * AudioContext Auto-Resume: Automatically recovers from browser suspension.
+  * Safe STT-Backed Barge-In: Requires >= 2 words and vocal RMS confirmation before firing STT barge-in.
+  * Multi-Signal Answer Completion:
+    * Standard verbal answer: >= 4 words, >= 3.0s duration, 2.2s silence.
+    * Short verbal answer: 1-3 words, >= 2.5s duration, 3.5s grace silence.
+    * Acoustic fallback: >= 1.5s cumulative vocal energy, 3.0s silence (even if browser STT drops words).
+* **State Machine & Lifecycle Guards**: [`frontend/src/pages/LiveInterviewPage.jsx`](file:///C:/Workspace/Workspace/InterviewApp/frontend/src/pages/LiveInterviewPage.jsx)
+  * Deterministic Lifecycle: Decoupled TTS from effect cleanups to ensure initial greeting is audibly spoken and Question 2+ microphones never die.
+  * Centralized AI Speech States (`isAISpeakingState`): Barge-in active across Questions, Greetings, Greeting Acks, Transition Bridges, Repeat Acks, Clarifications, and Closings.
+  * Speech Generation ID (`speechGenerationIdRef`): Ensures cancelled/interrupted speech never executes old `.then()` state transition callbacks.
+  * Lock Safety: `try ... finally` guarantees `isUploadingRef` and `transitionLockRef` never deadlock.
 
-- [ ] Chrome (latest) on a lab PC with a physical microphone.
-- [ ] Grant microphone permission before starting (about:flags -> web speech on all pages if needed).
-- [ ] Disable OS/VPN audio processing that may alter RMS levels.
-- [ ] All 4 services running (`backend :5000`, `face :8001`, `voice :8002`, `nlp :8003`) + Mongo.
-- [ ] Frontend dev server serving the app.
+---
 
-## Test 1 — Silence auto-advance (2.2 s)
+## 2. Environment Preparation
 
-Steps: start a technical interview, answer a question, then stop speaking.
-Expected: the turn ends approximately 2.2 s after the last speech (allow +200 ms tolerance).
-Record: measured silence duration = ______ ms. PASS / FAIL.
+- [ ] Physical machine (Laptop / Lab PC) with working microphone and speakers.
+- [ ] Google Chrome (latest) or Microsoft Edge with microphone & camera permissions granted.
+- [ ] Normal room environment (ceiling fan, laptop cooling fan, or typical ambient background sound).
+- [ ] Backend stack running:
+  - Backend API on port `5000` (`npm run dev` in `backend/`)
+  - NLP Service on port `8003` / `5001` (`python -u main.py` in `ai-services/nlp-service/`)
+  - Voice Service on port `8002` (if Kokoro TTS enabled)
+  - Frontend on port `5173` (`npm run dev` in `frontend/`)
 
-## Test 2 — Thinking grace period (4.0 s)
+---
 
-Steps: after the interviewer starts a question, say nothing for 3 s.
-Expected: the interviewer must NOT auto-advance or time out within the 4 s grace window.
-Record: observed timeout = ______ ms. PASS / FAIL.
+## 3. Physical Test Protocol
 
-## Test 3 — Min answer enforcement (3.0 s)
+| Test ID | Test Scenario | Step-by-Step Action | Expected Behavior | Pass / Fail |
+|---|---|---|---|---|
+| **Test 1** | **Initial Welcome Greeting Delivery** | Start the interview. Do not click anything. Listen. | Full initial welcome greeting is audibly spoken by AI. System then transitions into listening. | `[ ] PASS / [ ] FAIL` |
+| **Test 2** | **Greeting Acknowledgement & Q1 Transition** | After greeting, speak *"Hello, I am ready."* (or wait 4.5s). | AI speaks acknowledgement (*"Wonderful! Let's get started..."*) and Question 1 begins. | `[ ] PASS / [ ] FAIL` |
+| **Test 3** | **Question 1 Answer & Auto-Advance** | Speak an answer to Question 1, then pause for 2.2s. | Speaking visualizer pulses. Turn auto-completes. Transition phrase plays. | `[ ] PASS / [ ] FAIL` |
+| **Test 4** | **Question 2 Microphone & VAD Persistence** | When Question 2 plays, answer naturally. | **Speaking visualizer active on Question 2**. VAD tracks speech. Turn auto-completes. Transition to Q3 works seamlessly! | `[ ] PASS / [ ] FAIL` |
+| **Test 5** | **Question 3+ Multi-Question Continuity** | Answer Question 3, Question 4, and beyond. | Microphone/VAD/STT remains 100% active and healthy across every single consecutive question. | `[ ] PASS / [ ] FAIL` |
+| **Test 6** | **Ambient Noise Rejection** | Stay completely silent during AI question reading with fan on. | AI speaks the entire question smoothly without false interruption. | `[ ] PASS / [ ] FAIL` |
+| **Test 7** | **Voice Repeat Request** | Say: *"Can you repeat the question please?"* | AI acknowledges and repeats the current question without advancing index. | `[ ] PASS / [ ] FAIL` |
+| **Test 8** | **Voice Clarification Request** | Ask: *"What do you mean by ACID compliance?"* | AI delivers a brief 1-2 sentence clarification and resumes listening. | `[ ] PASS / [ ] FAIL` |
+| **Test 9** | **Mid-Question Barge-In** | Interrupt Question TTS mid-sentence with direct answer. | AI stops instantly; opening words are preserved in transcript. | `[ ] PASS / [ ] FAIL` |
+| **Test 10** | **Natural Closing & Teardown** | Complete final question. | AI delivers closing statement. Media tracks close. Navigates to report. | `[ ] PASS / [ ] FAIL` |
 
-Steps: give a 1.5 s utterance as an answer.
-Expected: the system either (a) discards it as too short, or (b) prompts for a longer answer,
-per the documented UX. Record observed behavior: ______. PASS / FAIL.
+---
 
-## Test 4 — Audio-level barge-in (RMS 0.038 / 120 ms sustain)
+## 4. Physical Test Sign-Off
 
-Steps: while the interviewer TTS is speaking, talk over it with a normal voice.
-Expected: playback is interrupted within ~120 ms of sustained speech exceeding the threshold
-and the interview continues with the candidate's turn.
-Record: interruption latency = ______ ms. PASS / FAIL.
-
-## Test 5 — STT-backed barge-in (Web Speech interim)
-
-Steps: while TTS is speaking, speak a short phrase that the Web Speech API can transcribe.
-Expected: the phrase appears as an interim transcript and `onBargeIn({ source: "stt_interim" })`
-fires, ending the TTS even if RMS is below the audio threshold.
-Record: fires? YES / NO. PASS / FAIL.
-
-## Test 6 — Barge-in during clarification
-
-Steps: trigger a clarification (interruption with a question) and answer while the
-clarification prompt is still being read.
-Expected: the prompt is cut off and the answer is recorded without duplication.
-Record: PASS / FAIL.
-
-## Test 7 — Post-interview routing
-
-Steps: finish the last question; the interview should navigate to `/interview/processing`
-with the session id in state, then to the report on completion.
-Record: routes observed = ______. PASS / FAIL.
-
-## Test 8 — End-to-end score integrity on real media
-
-Steps: run the full interview with real audio/video, then open the report.
-Expected: `overallScore`, `nlpVerbalScore`, `voiceSerScore`, `faceVisualScore`, and
-`writingTestScore` are all non-zero and internally consistent.
-Record: scores = ______. PASS / FAIL.
-
-## Sign-off
-
-- Tester: ______
-- Date: ______
-- Machine/OS: ______
-- Browser + version: ______
-- Overall result (all 8 must pass): PASS / FAIL
-- Notes / defects found: ______
+* **Tester Name / ID**: ___________________________
+* **Date & Time Tested**: ___________________________
+* **Device / Microphone**: ___________________________
+* **Browser Version**: ___________________________
+* **Overall Physical Result (All Tests 1-10 Passed)**: `[ ] PASS  /  [ ] FAIL`
+* **Observed Notes / Acoustic Remarks**: ___________________________

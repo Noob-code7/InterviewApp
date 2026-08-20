@@ -1,4 +1,4 @@
-﻿import Session from "../models/Session.js";
+import Session from "../models/Session.js";
 import { sendSuccess, sendError } from "../utils/response.js";
 
 const clampScore = (score) => {
@@ -258,6 +258,7 @@ export const getReport = async (req, res) => {
       graduationYear: session.graduationYear || "",
       resumeText: session.resumeText || "",
       writingSubmission: session.writingSubmission || "",
+      includeWritingTest: session.includeWritingTest !== false,
     };
 
     await Session.findByIdAndUpdate(

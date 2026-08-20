@@ -29,6 +29,7 @@ export default function InterviewSetupPage() {
   const [role, setRole] = useState("Fullstack Systems Engineer");
   const [questionCount, setQuestionCount] = useState(5);
   const [company, setCompany] = useState("");
+  const [includeWritingTest, setIncludeWritingTest] = useState(true);
 
   const [resumeFile, setResumeFile] = useState(null);
   const [resumeText, setResumeText] = useState("");
@@ -107,6 +108,7 @@ export default function InterviewSetupPage() {
         role: interviewType === "company" && company.trim() ? company + " - " + role : role,
         interviewType,
         questionCount,
+        includeWritingTest,
         referenceImage,
         resumeText: resumeText || role + " Candidate Resume Background",
       });
@@ -346,6 +348,33 @@ export default function InterviewSetupPage() {
                         {n} Questions
                       </button>
                     ))}
+                  </div>
+                </div>
+
+                <div className="p-5 bg-[#FAF9F5] border border-[#E0DFD9] rounded-xl flex items-start gap-4">
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={includeWritingTest}
+                    onClick={() => setIncludeWritingTest((v) => !v)}
+                    className={`relative w-11 h-6 rounded-full transition-colors shrink-0 mt-0.5 ${
+                      includeWritingTest ? "bg-[#1D5DFF]" : "bg-[#D1D5DB]"
+                    }`}
+                  >
+                    <span
+                      className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${
+                        includeWritingTest ? "translate-x-5" : ""
+                      }`}
+                    />
+                  </button>
+                  <div>
+                    <div className="text-sm font-bold text-[#111110]">
+                      Include Technical Writing Test
+                    </div>
+                    <p className="text-[11px] text-[#6B7280] mt-0.5">
+                      After the interview, you may complete a short written technical
+                      assessment. Analyzed locally and included in your report.
+                    </p>
                   </div>
                 </div>
               </div>

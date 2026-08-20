@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
-import { useParams, useNavigate, Link } from "react-router-dom";
+import { useParams, useNavigate } from "react-router-dom";
 import { interviewApi } from "../api/interview.js";
+import { sessionsApi } from "../api/sessions.js";
 
 const DEFAULT_WRITING_PROMPTS = {
   default: "Describe the architecture of a high-scale web application you would design. Detail your database choice, caching layers, API design, and how you ensure fault tolerance under high traffic.",
@@ -15,6 +16,7 @@ export default function WritingTestPage() {
 
   const [session, setSession] = useState(null);
   const [text, setText] = useState("");
+  const [started, setStarted] = useState(false);
   const [timeLeft, setTimeLeft] = useState(600); // 10 minutes (600s)
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);
@@ -38,6 +40,7 @@ export default function WritingTestPage() {
   }, [sessionId]);
 
   useEffect(() => {
+    if (!started) return;
     timerRef.current = setInterval(() => {
       setTimeLeft((prev) => {
         if (prev <= 1) {
@@ -52,7 +55,23 @@ export default function WritingTestPage() {
     }, 1000);
 
     return () => clearInterval(timerRef.current);
-  }, [sessionId, text]);
+  }, [started, sessionId, text]);
+
+  const handleDecline = async () => {
+    if (submitting || submittedRef.current) return;
+    submittedRef.current = true;
+    setSubmitting(true);
+    setError(null);
+    try {
+      await sessionsApi.updateStatus(sessionId, "processing");
+      navigate("/interview/processing", { state: { sessionId } });
+    } catch (err) {
+      setError(err.response?.data?.message || "Failed to close the session. Please try again.");
+      submittedRef.current = false;
+    } finally {
+      setSubmitting(false);
+    }
+  };
 
   const handleSubmit = async () => {
     if (submitting || submittedRef.current) return;
@@ -106,25 +125,67 @@ export default function WritingTestPage() {
             </p>
           </div>
 
-          <div className="bg-[#FAF9F5] border border-[#E0DFD9] px-5 py-3 rounded-xl text-right shrink-0">
-            <span className="font-mono text-[10px] font-bold uppercase text-[#6B7280] tracking-widest block">
-              TIME REMAINING
-            </span>
-            <span className={`text-2xl font-black font-mono ${timeLeft < 120 ? "text-red-600 animate-pulse" : "text-[#111110]"}`}>
-              {formatTime(timeLeft)}
-            </span>
-          </div>
+          {started && (
+            <div className="bg-[#FAF9F5] border border-[#E0DFD9] px-5 py-3 rounded-xl text-right shrink-0">
+              <span className="font-mono text-[10px] font-bold uppercase text-[#6B7280] tracking-widest block">
+                TIME REMAINING
+              </span>
+              <span className={`text-2xl font-black font-mono ${timeLeft < 120 ? "text-red-600 animate-pulse" : "text-[#111110]"}`}>
+                {formatTime(timeLeft)}
+              </span>
+            </div>
+          )}
         </div>
 
+        {!started && (
+          <div className="bg-white border border-[#E0DFD9] rounded-2xl p-6 sm:p-8 shadow-sm space-y-6 animate-fade-in">
+            <div className="space-y-2">
+              <span className="font-mono text-xs font-bold uppercase text-[#1D5DFF] tracking-wider block">
+                YOUR INTERVIEW IS COMPLETE
+              </span>
+              <h2 className="text-xl sm:text-2xl font-extrabold text-[#111110] tracking-tight">
+                Optional Technical Writing Assessment
+              </h2>
+              <p className="text-sm text-[#4B5563] font-medium leading-relaxed">
+                Take an optional short written technical assessment to strengthen your report with a
+                structured writing score. It takes about 10 minutes and is evaluated locally.
+              </p>
+            </div>
+
+            <div className="flex flex-col sm:flex-row gap-3 pt-2">
+              <button
+                onClick={() => setStarted(true)}
+                disabled={submitting}
+                className="bg-[#111110] hover:bg-[#1D5DFF] text-white px-8 py-3.5 rounded-lg text-xs font-bold transition-all duration-200 shadow-sm active:scale-98 disabled:opacity-50"
+              >
+                Start Writing Test →
+              </button>
+              <button
+                onClick={handleDecline}
+                disabled={submitting}
+                className="bg-white border border-[#E0DFD9] text-[#111110] px-8 py-3.5 rounded-lg text-xs font-bold hover:border-[#111110] transition-colors disabled:opacity-50"
+              >
+                {submitting ? "Finalizing..." : "No thanks, go to my report"}
+              </button>
+            </div>
+
+            <p className="text-[11px] text-[#6B7280] font-medium">
+              You can decline at any time. Declining will finalize your session and take you straight to your report.
+            </p>
+          </div>
+        )}
+
         {/* Prompt Card */}
-        <div className="bg-white border border-[#E0DFD9] rounded-2xl p-6 sm:p-8 shadow-sm space-y-3">
-          <span className="font-mono text-xs font-bold uppercase text-[#111110] tracking-wider block">
-            ASSIGNED ARCHITECTURAL PROMPT:
-          </span>
-          <p className="text-base sm:text-lg font-bold text-[#111110] leading-relaxed">
-            {writingPrompt}
-          </p>
-        </div>
+        {started && (
+          <div className="bg-white border border-[#E0DFD9] rounded-2xl p-6 sm:p-8 shadow-sm space-y-3">
+            <span className="font-mono text-xs font-bold uppercase text-[#111110] tracking-wider block">
+              ASSIGNED ARCHITECTURAL PROMPT:
+            </span>
+            <p className="text-base sm:text-lg font-bold text-[#111110] leading-relaxed">
+              {writingPrompt}
+            </p>
+          </div>
+        )}
 
         {error && (
           <div className="p-4 border border-red-200 bg-red-50 text-red-800 text-xs font-bold rounded-xl">
@@ -133,7 +194,8 @@ export default function WritingTestPage() {
         )}
 
         {/* Writing Editor */}
-        <div className="bg-white border border-[#E0DFD9] rounded-2xl p-6 sm:p-8 shadow-sm space-y-4">
+        {started && (
+          <div className="bg-white border border-[#E0DFD9] rounded-2xl p-6 sm:p-8 shadow-sm space-y-4">
           <div className="flex items-center justify-between border-b border-[#E0DFD9] pb-3">
             <span className="font-mono text-xs font-bold uppercase text-[#6B7280]">
               CANDIDATE RESPONSE DRAFT
@@ -163,6 +225,7 @@ export default function WritingTestPage() {
             </button>
           </div>
         </div>
+        )}
 
       </div>
     </div>

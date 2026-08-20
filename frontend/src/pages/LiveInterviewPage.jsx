@@ -1,9 +1,9 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { sessionsApi } from "../api/sessions.js";
 import { interviewApi } from "../api/interview.js";
 import { analysisApi } from "../api/analysis.js";
-import { Button, Card } from "../components/ui/index.js";
+import { Button } from "../components/ui/index.js";
 import LiveAudioVisualizer from "../components/ui/LiveAudioVisualizer.jsx";
 import { useVoiceActivityDetector } from "../hooks/useVoiceActivityDetector.js";
 import { speak, cancelTTS, preSynthesize } from "../utils/ttsService.js";
@@ -19,7 +19,7 @@ import {
   getRandomItem,
 } from "../utils/interviewConversationalPatterns.js";
 
-// Comprehensive Single-Owner Interview State Machine
+// Single-Owner Interview State Machine
 export const INTERVIEW_STATES = {
   INITIALIZING: "INITIALIZING",
   GREETING_SPEAKING: "GREETING_SPEAKING",
@@ -36,92 +36,215 @@ export const INTERVIEW_STATES = {
   COMPLETED: "COMPLETED",
 };
 
+export const isAISpeakingState = (state) =>
+  state === INTERVIEW_STATES.AI_SPEAKING ||
+  state === INTERVIEW_STATES.GREETING_SPEAKING ||
+  state === INTERVIEW_STATES.GREETING_ACK ||
+  state === INTERVIEW_STATES.TRANSITION_SPEAKING ||
+  state === INTERVIEW_STATES.REPEAT_ACK_SPEAKING ||
+  state === INTERVIEW_STATES.CLARIFICATION_SPEAKING ||
+  state === INTERVIEW_STATES.CLOSING_SPEAKING;
+
 export default function LiveInterviewPage() {
   const { sessionId } = useParams();
   const navigate = useNavigate();
 
-  // Core Session & Question State
+  // Session & Question States
   const [session, setSession] = useState(null);
   const [questions, setQuestions] = useState([]);
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
-  const [interviewState, setInterviewState] = useState(INTERVIEW_STATES.INITIALIZING);
-
-  // Status & Telemetry
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [uploading, setUploading] = useState(false);
-  const [aiSpeaking, setAiSpeaking] = useState(false);
 
-  // Conversational Greeting State
+  // Reactive MediaStream State (Ensures VAD receives stream reference reactively)
+  const [mediaStream, setMediaStream] = useState(null);
+
+  // Single-Owner State Machine State
+  const [interviewState, setInterviewState] = useState(INTERVIEW_STATES.INITIALIZING);
+
+  // Conversational Lifecycle Text States
   const [greetingText, setGreetingText] = useState("");
-  const [hasCompletedGreeting, setHasCompletedGreeting] = useState(false);
-  const greetingTimeoutRef = useRef(null);
-
-  // Automatic Question Transition State
   const [transitionText, setTransitionText] = useState("");
-  const transitionLockRef = useRef(false);
-  const lastSpokenTransitionIndexRef = useRef(-1);
-
-  // Repeat & Clarification State
   const [repeatAckText, setRepeatAckText] = useState("");
   const [clarificationText, setClarificationText] = useState("");
-  const repeatCountRef = useRef(0);
-
-  // Closing State (Phase 10)
   const [closingText, setClosingText] = useState("");
-
-  // Barge-In Telemetry & Ref
   const [lastBargeInLatency, setLastBargeInLatency] = useState(null);
 
-  // Interactive Project Follow-Up Loop State
-  const [followUpTurn, setFollowUpTurn] = useState(0);
+  // Dynamic Follow-Up States (Project Track)
   const [activeFollowUp, setActiveFollowUp] = useState(null);
+  const [followUpTurn, setFollowUpTurn] = useState(0);
   const [previousFollowUps, setPreviousFollowUps] = useState([]);
   const [isFollowUpLoading, setIsFollowUpLoading] = useState(false);
 
-  // Media & Recording State
+  // Media & Recording States
+  const [isRecording, setIsRecording] = useState(false);
+  const [liveTranscript, setLiveTranscript] = useState("");
+  const [timeLeft, setTimeLeft] = useState(120);
+  const [aiSpeaking, setAiSpeaking] = useState(false);
+  const [ttsStartTime, setTtsStartTime] = useState(0);
+
+  // Refs for State Synchronization & Hardware Tracks
   const videoRef = useRef(null);
   const streamRef = useRef(null);
   const mediaRecorderRef = useRef(null);
   const chunksRef = useRef([]);
-
-  // Live Speech Recognition & Timer
-  const [isRecording, setIsRecording] = useState(false);
-  const [timeLeft, setTimeLeft] = useState(120);
-  const [liveTranscript, setLiveTranscript] = useState("");
-  const [finalTranscript, setFinalTranscript] = useState("");
-
-  const liveTranscriptRef = useRef("");
-  const timerRef = useRef(null);
   const recognizerRef = useRef(null);
-  const autoStartRef = useRef(false);
-  const handleStartRecordingRef = useRef(null);
+  const timerRef = useRef(null);
+  const greetingTimeoutRef = useRef(null);
 
-  // Concurrency & Duplicate Transition Guards
-  const isAdvancingRef = useRef(false);
+  // Concurrency & Generation ID Lifecycle Guards
   const isUploadingRef = useRef(false);
-  const currentQIndexRef = useRef(0);
+  const transitionLockRef = useRef(false);
+  const lastSpokenTransitionIndexRef = useRef(-1);
+  const repeatCountRef = useRef(0);
+  const liveTranscriptRef = useRef("");
+  const currentQIndexRef = useRef(currentQuestionIndex);
   currentQIndexRef.current = currentQuestionIndex;
-  liveTranscriptRef.current = liveTranscript;
+
+  // Unique Generation ID: Tracks the currently active AI utterance
+  const speechGenerationIdRef = useRef(0);
+  const ttsStartTimeRef = useRef(0);
 
   const currentQ = questions[currentQuestionIndex];
-  const displayedQuestionText = activeFollowUp?.questionText || currentQ?.questionText || "";
+  const displayedQuestionText = activeFollowUp
+    ? activeFollowUp.questionText
+    : currentQ?.questionText || "";
 
-  // Single Authoritative Entry Point for Answer Completion
-  const triggerAnswerCompletion = useCallback((source = "auto") => {
-    if (
-      isAdvancingRef.current ||
-      isUploadingRef.current ||
-      transitionLockRef.current ||
-      interviewState === INTERVIEW_STATES.REPEAT_ACK_SPEAKING ||
-      interviewState === INTERVIEW_STATES.CLARIFICATION_SPEAKING ||
-      interviewState === INTERVIEW_STATES.CLOSING_SPEAKING
-    ) {
-      console.log(`[InterviewEngine] Transition/upload/dialogue in progress, dropping trigger from ${source}`);
+  // --------------------------------------------------------------------------
+  // Recording Initiation (Starts MediaRecorder, SpeechRecognition & Countdown)
+  // --------------------------------------------------------------------------
+  const startAnswerRecording = useCallback((initialText = "") => {
+    const stream = streamRef.current;
+    if (!stream) {
+      console.warn("[InterviewEngine] Cannot start recording: streamRef is null");
       return;
     }
 
-    const intent = classifyInterruption(liveTranscript);
+    console.log(`[InterviewEngine] Starting answer recording for Question ${currentQIndexRef.current + 1}`);
+
+    try {
+      chunksRef.current = [];
+      setLiveTranscript(initialText || "");
+      liveTranscriptRef.current = initialText || "";
+
+      let mediaRecorder;
+      try {
+        mediaRecorder = new MediaRecorder(stream, {
+          mimeType: "video/webm;codecs=vp8,opus",
+        });
+      } catch (e) {
+        mediaRecorder = new MediaRecorder(stream);
+      }
+
+      mediaRecorder.ondataavailable = (e) => {
+        if (e.data && e.data.size > 0) {
+          chunksRef.current.push(e.data);
+        }
+      };
+
+      mediaRecorder.onstop = () => {
+        handleUpload();
+      };
+
+      // Initialize Speech Recognition
+      const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+      if (SpeechRec) {
+        try {
+          if (recognizerRef.current) {
+            try {
+              recognizerRef.current.onend = null;
+              recognizerRef.current.stop();
+            } catch (e) {}
+            recognizerRef.current = null;
+          }
+
+          let networkErrorCount = 0;
+          const recog = new SpeechRec();
+          recog.continuous = true;
+          recog.interimResults = true;
+          recog.lang = "en-US";
+
+          let accumulated = initialText ? initialText + " " : "";
+
+          recog.onresult = (e) => {
+            let interim = "";
+            for (let i = e.resultIndex; i < e.results.length; i++) {
+              if (e.results[i].isFinal) {
+                accumulated += " " + e.results[i][0].transcript;
+              } else {
+                interim += e.results[i][0].transcript;
+              }
+            }
+            const fullText = (accumulated + " " + interim).trim();
+            liveTranscriptRef.current = fullText;
+            setLiveTranscript(fullText);
+          };
+
+          recog.onerror = (e) => {
+            if (e.error === "network") networkErrorCount += 1;
+          };
+
+          recog.onend = () => {
+            if (
+              mediaRecorderRef.current &&
+              mediaRecorderRef.current.state === "recording" &&
+              networkErrorCount < 3
+            ) {
+              try {
+                recog.start();
+              } catch (e) {}
+            }
+          };
+
+          try {
+            recog.start();
+            recognizerRef.current = recog;
+          } catch (recogErr) {
+            console.warn("[LiveSpeechRecognition] Start error:", recogErr.message);
+          }
+        } catch (e) {
+          console.warn("[LiveSpeechRecognition] Init error:", e.message);
+        }
+      }
+
+      mediaRecorderRef.current = mediaRecorder;
+      mediaRecorder.start(1000);
+      setIsRecording(true);
+      setTimeLeft(120);
+
+      clearInterval(timerRef.current);
+      timerRef.current = setInterval(() => {
+        setTimeLeft((prev) => {
+          if (prev <= 1) {
+            clearInterval(timerRef.current);
+            triggerAnswerCompletion("timeout");
+            return 0;
+          }
+          return prev - 1;
+        });
+      }, 1000);
+    } catch (startErr) {
+      console.error("Failed to start MediaRecorder:", startErr);
+    }
+  }, []);
+
+  // --------------------------------------------------------------------------
+  // Answer Completion Trigger
+  // --------------------------------------------------------------------------
+  const triggerAnswerCompletion = useCallback((source = "auto") => {
+    if (
+      interviewState === INTERVIEW_STATES.PROCESSING_ANSWER ||
+      interviewState === INTERVIEW_STATES.ADVANCING ||
+      interviewState === INTERVIEW_STATES.COMPLETED ||
+      interviewState === INTERVIEW_STATES.TRANSITION_SPEAKING ||
+      interviewState === INTERVIEW_STATES.CLOSING_SPEAKING
+    ) {
+      console.log(`[InterviewEngine] Transition/upload in progress, dropping trigger from ${source}`);
+      return;
+    }
+
+    const intent = classifyInterruption(liveTranscriptRef.current);
     if (intent === INTERRUPTION_INTENTS.REPEAT_REQUEST) {
       console.log("[InterviewEngine] Spoken utterance classified as REPEAT_REQUEST. Triggering question replay.");
       handleRepeatQuestion();
@@ -159,10 +282,13 @@ export default function LiveInterviewPage() {
     clearInterval(timerRef.current);
   }, [interviewState]);
 
+  // --------------------------------------------------------------------------
   // Repeat Question Handler
+  // --------------------------------------------------------------------------
   const handleRepeatQuestion = useCallback(() => {
     console.log(`[RepeatEngine] Repeating current Question ${currentQIndexRef.current + 1}`);
     repeatCountRef.current += 1;
+    const currentGenId = ++speechGenerationIdRef.current;
 
     if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
       try {
@@ -182,26 +308,31 @@ export default function LiveInterviewPage() {
     setIsRecording(false);
     chunksRef.current = [];
     setLiveTranscript("");
+    liveTranscriptRef.current = "";
     clearInterval(timerRef.current);
 
     const chosenAck = getRandomItem(REPEAT_ACKNOWLEDGEMENTS);
     setRepeatAckText(chosenAck);
     setInterviewState(INTERVIEW_STATES.REPEAT_ACK_SPEAKING);
     setAiSpeaking(true);
+    ttsStartTimeRef.current = Date.now();
+    setTtsStartTime(Date.now());
 
-    const resumeQuestionTTS = () => {
-      setTimeout(() => {
-        setAiSpeaking(false);
-        setInterviewState(INTERVIEW_STATES.AI_SPEAKING);
-      }, 400);
-    };
-
-    speak(chosenAck).then(resumeQuestionTTS);
+    speak(chosenAck).then(() => {
+      if (currentGenId !== speechGenerationIdRef.current) return;
+      playQuestionTTS(currentQIndexRef.current);
+    }).catch(() => {
+      if (currentGenId !== speechGenerationIdRef.current) return;
+      playQuestionTTS(currentQIndexRef.current);
+    });
   }, []);
 
+  // --------------------------------------------------------------------------
   // Clarification Request Handler
+  // --------------------------------------------------------------------------
   const handleClarificationRequest = useCallback(() => {
     console.log(`[ClarificationEngine] Handling clarification for Question ${currentQIndexRef.current + 1}`);
+    const currentGenId = ++speechGenerationIdRef.current;
 
     if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
       try {
@@ -222,37 +353,73 @@ export default function LiveInterviewPage() {
     setIsRecording(false);
     chunksRef.current = [];
     setLiveTranscript("");
+    liveTranscriptRef.current = "";
     clearInterval(timerRef.current);
 
     const response = generateClarificationResponse(displayedQuestionText, candidateQuery);
     setClarificationText(response);
     setInterviewState(INTERVIEW_STATES.CLARIFICATION_SPEAKING);
     setAiSpeaking(true);
+    ttsStartTimeRef.current = Date.now();
+    setTtsStartTime(Date.now());
 
-    const resumeCandidateListening = () => {
-      setTimeout(() => {
-        setAiSpeaking(false);
-        handleStartRecordingRef.current?.();
-      }, 400);
-    };
+    speak(response).then(() => {
+      if (currentGenId !== speechGenerationIdRef.current) return;
+      setAiSpeaking(false);
+      setInterviewState(INTERVIEW_STATES.LISTENING);
+      startAnswerRecording();
+    }).catch(() => {
+      if (currentGenId !== speechGenerationIdRef.current) return;
+      setAiSpeaking(false);
+      setInterviewState(INTERVIEW_STATES.LISTENING);
+      startAnswerRecording();
+    });
+  }, [displayedQuestionText, startAnswerRecording]);
 
-    speak(response).then(resumeCandidateListening);
-  }, [displayedQuestionText]);
-
-  // Barge-In Interruption Handler
+  // --------------------------------------------------------------------------
+  // Centralized Barge-In Interruption Handler (Active for ALL AI Speech)
+  // --------------------------------------------------------------------------
   const handleBargeInInterruption = useCallback(
-    ({ source, text, onsetTime, timestamp }) => {
+    ({ source, text, rms, noiseFloor, onsetTime, timestamp }) => {
+      speechGenerationIdRef.current += 1;
+
       try {
         cancelTTS();
       } catch (e) {}
+
       const tCompleted = performance.now();
       const referenceOnset = onsetTime || timestamp || tCompleted;
-      const endToEndLatencyMs = tCompleted - referenceOnset;
+      const endToEndLatencyMs = Math.max(0, tCompleted - referenceOnset);
       setLastBargeInLatency(endToEndLatencyMs);
-      console.log(`[BargeIn Engine] Full Pipeline Barge-In in ${endToEndLatencyMs.toFixed(2)}ms (Trigger: ${source})`);
+
+      console.log(
+        `[BargeIn Engine] Interrupted during ${interviewState} in ${endToEndLatencyMs.toFixed(1)}ms (Source: ${source}, RMS: ${rms?.toFixed(3) || 'N/A'}, NoiseFloor: ${noiseFloor?.toFixed(3) || 'N/A'})`
+      );
 
       setAiSpeaking(false);
-      autoStartRef.current = true;
+      transitionLockRef.current = false;
+
+      // Interrupted during greeting
+      if (interviewState === INTERVIEW_STATES.GREETING_SPEAKING || interviewState === INTERVIEW_STATES.GREETING_ACK) {
+        setInterviewState(INTERVIEW_STATES.GREETING_LISTENING);
+        chunksRef.current = [];
+        setLiveTranscript(text || "");
+        liveTranscriptRef.current = text || "";
+        setIsRecording(true);
+        startAnswerRecording(text || "");
+        return;
+      }
+
+      // Interrupted during closing
+      if (interviewState === INTERVIEW_STATES.CLOSING_SPEAKING) {
+        setInterviewState(INTERVIEW_STATES.COMPLETED);
+        stopCamera();
+        navigate("/interview/processing", { state: { sessionId } });
+        return;
+      }
+
+      // Interrupted during question, transition, repeat ack, or clarification
+      setInterviewState(INTERVIEW_STATES.LISTENING);
 
       if (text) {
         const intent = classifyInterruption(text);
@@ -266,57 +433,55 @@ export default function LiveInterviewPage() {
         }
         console.log(`[MidQuestion Engine] Preserving opening answer words: "${text}"`);
         setLiveTranscript(text);
+        liveTranscriptRef.current = text;
       }
 
-      setInterviewState(INTERVIEW_STATES.LISTENING);
-      if (!isRecording) {
-        handleStartRecordingRef.current?.(text || "");
-      }
+      startAnswerRecording(text || "");
     },
-    [isRecording, handleRepeatQuestion, handleClarificationRequest]
+    [interviewState, sessionId, navigate, handleRepeatQuestion, handleClarificationRequest, startAnswerRecording]
   );
 
-  // Reliable Voice Activity Detector Integration
+  // --------------------------------------------------------------------------
+  // Voice Activity Detector Hook
+  // --------------------------------------------------------------------------
   const isCandidateActiveListening =
     isRecording &&
     (interviewState === INTERVIEW_STATES.LISTENING ||
       interviewState === INTERVIEW_STATES.GREETING_LISTENING);
 
-  const isBargeInActive =
-    interviewState === INTERVIEW_STATES.AI_SPEAKING ||
-    interviewState === INTERVIEW_STATES.GREETING_SPEAKING ||
-    interviewState === INTERVIEW_STATES.CLARIFICATION_SPEAKING;
+  const isBargeInActive = isAISpeakingState(interviewState);
 
   const vad = useVoiceActivityDetector({
-    stream: streamRef.current,
+    stream: mediaStream,
     enabled: isCandidateActiveListening,
     bargeInEnabled: isBargeInActive,
-    speechThreshold: 0.025,
-    bargeInThreshold: 0.038,
-    bargeInSustainMs: 120,
+    speechThreshold: 0.030,
+    bargeInThreshold: 0.055,
+    bargeInSustainMs: 260,
     silenceThresholdMs: 2200,
     thinkingGracePeriodMs: 4000,
     minAnswerDurationMs: interviewState === INTERVIEW_STATES.GREETING_LISTENING ? 1500 : 3000,
     minWordCount: interviewState === INTERVIEW_STATES.GREETING_LISTENING ? 1 : 4,
-    onAnswerComplete: ({ reason, silenceDuration, wordCount }) => {
+    ttsStartTime,
+    onAnswerComplete: ({ reason, silenceDuration, wordCount, duration }) => {
       if (interviewState === INTERVIEW_STATES.GREETING_LISTENING) {
-        console.log(`[GreetingEngine] Greeting response detected (${wordCount} words). Transitioning to ack.`);
+        console.log(`[GreetingEngine] Greeting response detected (${wordCount} words, duration ${duration}ms). Transitioning to ack.`);
         transitionFromGreetingToQ1();
       } else if (interviewState === INTERVIEW_STATES.LISTENING) {
-        console.log(`[VAD Engine] Auto-completing answer: ${reason} (silence: ${silenceDuration}ms, words: ${wordCount})`);
+        console.log(`[VAD Engine] Auto-completing answer: ${reason} (silence: ${silenceDuration}ms, words: ${wordCount}, duration: ${duration}ms)`);
         triggerAnswerCompletion(`vad_${reason}`);
       }
     },
     onBargeIn: handleBargeInInterruption,
   });
 
-  // Feed live transcript into VAD tracker and check for real-time commands
+  // Check live transcript for voice commands (repeat / clarify) while listening
   useEffect(() => {
     if (liveTranscript) {
       vad.notifyTranscriptUpdate(liveTranscript);
 
       if (interviewState === INTERVIEW_STATES.LISTENING) {
-const intent = classifyInterruption(liveTranscriptRef.current);
+        const intent = classifyInterruption(liveTranscriptRef.current);
         if (intent === INTERRUPTION_INTENTS.REPEAT_REQUEST) {
           console.log("[LiveListening] Recognized repeat question command. Triggering repeat.");
           handleRepeatQuestion();
@@ -328,9 +493,45 @@ const intent = classifyInterruption(liveTranscriptRef.current);
     }
   }, [liveTranscript, vad, interviewState, handleRepeatQuestion, handleClarificationRequest]);
 
+  // --------------------------------------------------------------------------
+  // Question TTS Player Function
+  // --------------------------------------------------------------------------
+  const playQuestionTTS = useCallback((questionIndex) => {
+    const q = questions[questionIndex];
+    if (!q) return;
+
+    const currentGenId = ++speechGenerationIdRef.current;
+    const textToSpeak = activeFollowUp ? activeFollowUp.questionText : q.questionText;
+
+    console.log(`[InterviewEngine] Playing Question ${questionIndex + 1} TTS: "${textToSpeak.slice(0, 45)}..."`);
+
+    setInterviewState(INTERVIEW_STATES.AI_SPEAKING);
+    setAiSpeaking(true);
+    ttsStartTimeRef.current = Date.now();
+    setTtsStartTime(Date.now());
+
+    speak(textToSpeak)
+      .then(() => {
+        if (currentGenId !== speechGenerationIdRef.current) return;
+        setAiSpeaking(false);
+        setInterviewState(INTERVIEW_STATES.LISTENING);
+        startAnswerRecording();
+      })
+      .catch((err) => {
+        console.warn("[TTS] Speech playback error:", err);
+        if (currentGenId !== speechGenerationIdRef.current) return;
+        setAiSpeaking(false);
+        setInterviewState(INTERVIEW_STATES.LISTENING);
+        startAnswerRecording();
+      });
+  }, [questions, activeFollowUp, startAnswerRecording]);
+
+  // --------------------------------------------------------------------------
   // Transition from Greeting to Question 1
+  // --------------------------------------------------------------------------
   const transitionFromGreetingToQ1 = useCallback(() => {
     if (greetingTimeoutRef.current) clearTimeout(greetingTimeoutRef.current);
+    const currentGenId = ++speechGenerationIdRef.current;
 
     if (recognizerRef.current) {
       try {
@@ -348,288 +549,45 @@ const intent = classifyInterruption(liveTranscriptRef.current);
     setIsRecording(false);
     chunksRef.current = [];
     setLiveTranscript("");
-    setHasCompletedGreeting(true);
+    liveTranscriptRef.current = "";
     setInterviewState(INTERVIEW_STATES.GREETING_ACK);
+    setAiSpeaking(true);
+    ttsStartTimeRef.current = Date.now();
+    setTtsStartTime(Date.now());
 
     const ackPhrase = getRandomItem(GREETING_ACKNOWLEDGEMENTS);
 
-    speak(ackPhrase).then(() => {
-      setTimeout(() => {
-        setInterviewState(INTERVIEW_STATES.AI_SPEAKING);
-      }, 400);
-    });
-  }, []);
-
-  // Initialize Session and Fetch Questions
-  useEffect(() => {
-    let isMounted = true;
-
-    const init = async () => {
-      try {
-        const { data } = await sessionsApi.get(sessionId);
-        const fetchedSession = data?.data?.session;
-
-        if (!fetchedSession) {
-          if (isMounted) {
-            setError("Session not found");
-            setLoading(false);
-          }
-          return;
-        }
-
-        if (isMounted) setSession(fetchedSession);
-
-        // Fetch or generate questions
-        const qRes = await interviewApi.generateQuestions(sessionId);
-        const fetchedQuestions =
-          qRes.data?.data?.questions ||
-          qRes.data?.data?.session?.answers ||
-          fetchedSession?.answers ||
-          [];
-
-        if (fetchedQuestions.length === 0) {
-          if (isMounted) {
-            setError("No interview questions available for this session.");
-            setLoading(false);
-          }
-          return;
-        }
-
-        const chosenGreeting = getRandomItem(INTERVIEW_GREETINGS);
-        if (isMounted) {
-          setQuestions(fetchedQuestions);
-          setGreetingText(chosenGreeting);
-          setLoading(false);
-        }
-
-        preSynthesize(chosenGreeting);
-        [
-          ...GREETING_ACKNOWLEDGEMENTS,
-          ...QUESTION_TRANSITIONS,
-          ...REPEAT_ACKNOWLEDGEMENTS,
-          ...CLOSING_STATEMENTS,
-        ].forEach((phrase) => preSynthesize(phrase));
-
-        await startCamera();
-      } catch (err) {
-        if (err.response?.status === 401) {
-          navigate("/login");
-          return;
-        } else if (err.response?.status === 404) {
-          if (isMounted) setError("Interview session not found");
-        } else {
-          if (isMounted) setError(err.response?.data?.error || "Failed to load interview session");
-        }
-        if (isMounted) setLoading(false);
-      }
-    };
-
-    init();
-
-    return () => {
-      isMounted = false;
-      stopCamera();
-      clearInterval(timerRef.current);
-      if (greetingTimeoutRef.current) clearTimeout(greetingTimeoutRef.current);
-      cancelTTS();
-    };
-  }, [sessionId, navigate]);
-
-  // Bind video element whenever loading finishes or stream is ready
-  useEffect(() => {
-    if (!loading && videoRef.current && streamRef.current) {
-      videoRef.current.srcObject = streamRef.current;
-    }
-  }, [loading]);
-
-  const startCamera = async () => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: true,
-        audio: true,
+    speak(ackPhrase)
+      .then(() => {
+        if (currentGenId !== speechGenerationIdRef.current) return;
+        playQuestionTTS(0);
+      })
+      .catch(() => {
+        if (currentGenId !== speechGenerationIdRef.current) return;
+        playQuestionTTS(0);
       });
-      streamRef.current = stream;
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-      }
-    } catch (err) {
-      setError("Camera/Microphone access denied. Please enable it in browser settings.");
-    }
-  };
+  }, [playQuestionTTS]);
 
-  const stopCamera = () => {
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach((track) => track.stop());
-      streamRef.current = null;
-    }
-    if (videoRef.current) {
-      videoRef.current.srcObject = null;
-    }
-  };
-
-  // Conversational Greeting Lifecycle
-  useEffect(() => {
-    if (loading || !greetingText || hasCompletedGreeting || interviewState !== INTERVIEW_STATES.INITIALIZING) return;
-
-    setInterviewState(INTERVIEW_STATES.GREETING_SPEAKING);
-    setAiSpeaking(true);
-
-    let fallbackTimeout;
-
-    const startGreetingListening = () => {
-      setAiSpeaking(false);
-      setInterviewState(INTERVIEW_STATES.GREETING_LISTENING);
-      chunksRef.current = [];
-      setLiveTranscript("");
-      setIsRecording(true);
-
-      greetingTimeoutRef.current = setTimeout(() => {
-        transitionFromGreetingToQ1();
-      }, 4500);
-    };
-
-    speak(greetingText)
-      .then(startGreetingListening)
-      .catch(startGreetingListening);
-    fallbackTimeout = setTimeout(startGreetingListening, 12000);
-
-    return () => {
-      clearTimeout(fallbackTimeout);
-      cancelTTS();
-    };
-  }, [loading, greetingText, hasCompletedGreeting, interviewState, transitionFromGreetingToQ1]);
-
-  // Start Candidate Recording & Live STT for Questions
-  const handleStartRecording = useCallback((initialText = "") => {
-    if (
-      !streamRef.current ||
-      isAdvancingRef.current ||
-      transitionLockRef.current ||
-      interviewState === INTERVIEW_STATES.REPEAT_ACK_SPEAKING ||
-      interviewState === INTERVIEW_STATES.CLARIFICATION_SPEAKING ||
-      interviewState === INTERVIEW_STATES.CLOSING_SPEAKING
-    )
-      return;
-
-    setInterviewState(INTERVIEW_STATES.LISTENING);
-    chunksRef.current = [];
-    if (initialText) {
-      setLiveTranscript(initialText);
-    } else {
-      setLiveTranscript("");
-    }
-    let networkErrorCount = 0;
-
-    const mimeType = MediaRecorder.isTypeSupported("video/webm;codecs=vp8,opus")
-      ? "video/webm;codecs=vp8,opus"
-      : "video/webm";
-
-    const mediaRecorder = new MediaRecorder(streamRef.current, { mimeType });
-
-    mediaRecorder.ondataavailable = (event) => {
-      if (event.data && event.data.size > 0) {
-        chunksRef.current.push(event.data);
-      }
-    };
-
-    mediaRecorder.onstop = () => {
-      handleUpload();
-    };
-
-    // Live Web Speech Recognition
-    try {
-      const SpeechRecognition =
-        window.SpeechRecognition || window.webkitSpeechRecognition;
-
-      if (SpeechRecognition) {
-        setTimeout(() => {
-          try {
-            const recog = new SpeechRecognition();
-            recog.continuous = true;
-            recog.interimResults = true;
-            recog.lang = "en-US";
-
-            let accumulated = initialText ? initialText + " " : "";
-
-            recog.onresult = (e) => {
-              let interim = "";
-              for (let i = e.resultIndex; i < e.results.length; i++) {
-                if (e.results[i].isFinal) {
-                  accumulated += " " + e.results[i][0].transcript;
-                } else {
-                  interim += e.results[i][0].transcript;
-                }
-              }
-              const fullText = (accumulated + " " + interim).trim();
-              liveTranscriptRef.current = fullText;
-              setLiveTranscript(fullText);
-            };
-
-            recog.onerror = (e) => {
-              if (e.error === "network") networkErrorCount += 1;
-            };
-
-            recog.onend = () => {
-              if (
-                mediaRecorderRef.current &&
-                mediaRecorderRef.current.state === "recording" &&
-                networkErrorCount < 3
-              ) {
-                try {
-                  recog.start();
-                } catch (e) {}
-              }
-            };
-
-            recog.start();
-            recognizerRef.current = recog;
-          } catch (recogErr) {
-            console.warn("[LiveSpeechRecognition] Start error:", recogErr.message);
-          }
-        }, 150);
-      }
-    } catch (e) {
-      console.warn("[LiveSpeechRecognition] Init error:", e.message);
-    }
-
-    try {
-      mediaRecorderRef.current = mediaRecorder;
-      mediaRecorder.start(1000);
-      setIsRecording(true);
-      setTimeLeft(120);
-
-      clearInterval(timerRef.current);
-      timerRef.current = setInterval(() => {
-        setTimeLeft((prev) => {
-          if (prev <= 1) {
-            clearInterval(timerRef.current);
-            triggerAnswerCompletion("timeout");
-            return 0;
-          }
-          return prev - 1;
-        });
-      }, 1000);
-    } catch (startErr) {
-      console.error("Failed to start MediaRecorder:", startErr);
-    }
-  }, [triggerAnswerCompletion, interviewState]);
-
-  handleStartRecordingRef.current = handleStartRecording;
-
+  // --------------------------------------------------------------------------
   // Automatic Question Transition Execution
+  // --------------------------------------------------------------------------
   const executeQuestionTransition = useCallback(
     (nextIndex) => {
       if (transitionLockRef.current) return;
       transitionLockRef.current = true;
       lastSpokenTransitionIndexRef.current = nextIndex;
+      const currentGenId = ++speechGenerationIdRef.current;
 
       const chosenTransition = getRandomItem(QUESTION_TRANSITIONS);
       setTransitionText(chosenTransition);
       setInterviewState(INTERVIEW_STATES.TRANSITION_SPEAKING);
       setAiSpeaking(true);
+      ttsStartTimeRef.current = Date.now();
+      setTtsStartTime(Date.now());
 
-      const proceedToNextQuestion = () => {
-        setTimeout(() => {
+      speak(chosenTransition)
+        .then(() => {
+          if (currentGenId !== speechGenerationIdRef.current) return;
           setAiSpeaking(false);
           setCurrentQuestionIndex(nextIndex);
           setUploading(false);
@@ -637,29 +595,46 @@ const intent = classifyInterruption(liveTranscriptRef.current);
           transitionLockRef.current = false;
           chunksRef.current = [];
           setLiveTranscript("");
-          setInterviewState(INTERVIEW_STATES.AI_SPEAKING);
-        }, 500);
-      };
-
-      speak(chosenTransition)
-        .then(proceedToNextQuestion)
-        .catch(proceedToNextQuestion);
+          liveTranscriptRef.current = "";
+          playQuestionTTS(nextIndex);
+        })
+        .catch(() => {
+          if (currentGenId !== speechGenerationIdRef.current) return;
+          setAiSpeaking(false);
+          setCurrentQuestionIndex(nextIndex);
+          setUploading(false);
+          isUploadingRef.current = false;
+          transitionLockRef.current = false;
+          chunksRef.current = [];
+          setLiveTranscript("");
+          liveTranscriptRef.current = "";
+          playQuestionTTS(nextIndex);
+        });
     },
-    []
+    [playQuestionTTS]
   );
 
-  // Natural Interview Closing Execution (Phase 10)
+  // --------------------------------------------------------------------------
+  // Natural Interview Closing Execution
+  // --------------------------------------------------------------------------
   const executeNaturalClosing = useCallback(async () => {
-    isAdvancingRef.current = true;
+    const currentGenId = ++speechGenerationIdRef.current;
     const chosenClosing = getRandomItem(CLOSING_STATEMENTS);
     setClosingText(chosenClosing);
     setInterviewState(INTERVIEW_STATES.CLOSING_SPEAKING);
     setAiSpeaking(true);
+    ttsStartTimeRef.current = Date.now();
+    setTtsStartTime(Date.now());
 
     const finalizeAndNavigate = async () => {
+      if (currentGenId !== speechGenerationIdRef.current) return;
       setAiSpeaking(false);
       stopCamera();
       setInterviewState(INTERVIEW_STATES.COMPLETED);
+      if (session?.includeWritingTest) {
+        navigate(`/interview/writing/${sessionId}`);
+        return;
+      }
       try {
         await sessionsApi.updateStatus(sessionId, "processing");
       } catch (statusErr) {
@@ -671,9 +646,11 @@ const intent = classifyInterruption(liveTranscriptRef.current);
     speak(chosenClosing)
       .then(finalizeAndNavigate)
       .catch(finalizeAndNavigate);
-  }, [sessionId, navigate]);
+  }, [sessionId, navigate, session]);
 
+  // --------------------------------------------------------------------------
   // Handle Answer Upload & Automatic Progression
+  // --------------------------------------------------------------------------
   const handleUpload = async () => {
     if (isUploadingRef.current) return;
     isUploadingRef.current = true;
@@ -686,8 +663,6 @@ const intent = classifyInterruption(liveTranscriptRef.current);
 
       if (!currentQ) {
         console.warn("[InterviewEngine] No current question found during upload");
-        isUploadingRef.current = false;
-        setUploading(false);
         return;
       }
 
@@ -753,7 +728,8 @@ const intent = classifyInterruption(liveTranscriptRef.current);
             isUploadingRef.current = false;
             chunksRef.current = [];
             setLiveTranscript("");
-            setInterviewState(INTERVIEW_STATES.AI_SPEAKING);
+            liveTranscriptRef.current = "";
+            playQuestionTTS(currentQIndexRef.current);
             return;
           }
         } catch (fErr) {
@@ -762,7 +738,7 @@ const intent = classifyInterruption(liveTranscriptRef.current);
         setIsFollowUpLoading(false);
       }
 
-      // 4. Automatic Question Progression or Natural Closing (Phase 10)
+      // 4. Automatic Question Progression or Natural Closing
       setFollowUpTurn(0);
       setActiveFollowUp(null);
       setPreviousFollowUps([]);
@@ -774,68 +750,159 @@ const intent = classifyInterruption(liveTranscriptRef.current);
         executeQuestionTransition(nextIndex);
       } else {
         console.log(`[InterviewEngine] All ${questions.length} questions completed. Starting Natural Closing...`);
-        setUploading(false);
-        isUploadingRef.current = false;
         executeNaturalClosing();
       }
     } catch (err) {
       console.error("Upload error:", err);
       setError("Failed to upload answer. Moving forward...");
+    } finally {
       isUploadingRef.current = false;
       setUploading(false);
     }
   };
 
-  // Question TTS & State Transition to Listening
+  // --------------------------------------------------------------------------
+  // Camera & Stream Controls
+  // --------------------------------------------------------------------------
+  const startCamera = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: true,
+        audio: true,
+      });
+      streamRef.current = stream;
+      setMediaStream(stream);
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+      }
+      return stream;
+    } catch (err) {
+      setError("Camera/Microphone access denied. Please enable it in browser settings.");
+      return null;
+    }
+  };
+
+  const stopCamera = () => {
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((track) => track.stop());
+      streamRef.current = null;
+      setMediaStream(null);
+    }
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
+  };
+
+  // --------------------------------------------------------------------------
+  // Session Initialization & Welcome Greeting Execution
+  // --------------------------------------------------------------------------
   useEffect(() => {
-    if (
-      loading ||
-      !hasCompletedGreeting ||
-      !displayedQuestionText ||
-      interviewState === INTERVIEW_STATES.COMPLETED ||
-      interviewState === INTERVIEW_STATES.TRANSITION_SPEAKING ||
-      interviewState === INTERVIEW_STATES.PROCESSING_ANSWER ||
-      interviewState === INTERVIEW_STATES.REPEAT_ACK_SPEAKING ||
-      interviewState === INTERVIEW_STATES.CLARIFICATION_SPEAKING ||
-      interviewState === INTERVIEW_STATES.CLOSING_SPEAKING
-    )
-      return;
+    let isMounted = true;
 
-    if (interviewState !== INTERVIEW_STATES.AI_SPEAKING) return;
+    const init = async () => {
+      try {
+        const { data } = await sessionsApi.get(sessionId);
+        const fetchedSession = data?.data?.session;
 
-    setFinalTranscript("");
-    autoStartRef.current = false;
-    setAiSpeaking(true);
-
-    let fallbackTimeout;
-    let retryStreamInterval;
-
-    const autoStartRecordingWhenReady = () => {
-      if (autoStartRef.current) return;
-      autoStartRef.current = true;
-      setAiSpeaking(false);
-
-      const attemptStart = () => {
-        if (streamRef.current) {
-          handleStartRecording();
-        } else {
-          retryStreamInterval = setTimeout(attemptStart, 300);
+        if (!fetchedSession) {
+          if (isMounted) {
+            setError("Session not found");
+            setLoading(false);
+          }
+          return;
         }
-      };
-      setTimeout(attemptStart, 400);
+
+        if (isMounted) setSession(fetchedSession);
+
+        // Fetch or generate questions
+        const qRes = await interviewApi.generateQuestions(sessionId);
+        const fetchedQuestions =
+          qRes.data?.data?.questions ||
+          qRes.data?.data?.session?.answers ||
+          fetchedSession?.answers ||
+          [];
+
+        if (fetchedQuestions.length === 0) {
+          if (isMounted) {
+            setError("No interview questions available for this session.");
+            setLoading(false);
+          }
+          return;
+        }
+
+        const chosenGreeting = getRandomItem(INTERVIEW_GREETINGS);
+        if (isMounted) {
+          setQuestions(fetchedQuestions);
+          setGreetingText(chosenGreeting);
+          setLoading(false);
+        }
+
+        preSynthesize(chosenGreeting);
+        [
+          ...GREETING_ACKNOWLEDGEMENTS,
+          ...QUESTION_TRANSITIONS,
+          ...REPEAT_ACKNOWLEDGEMENTS,
+          ...CLOSING_STATEMENTS,
+        ].forEach((phrase) => preSynthesize(phrase));
+
+        await startCamera();
+
+        // Start Greeting Delivery after camera is initialized
+        if (isMounted) {
+          const currentGenId = ++speechGenerationIdRef.current;
+          setInterviewState(INTERVIEW_STATES.GREETING_SPEAKING);
+          setAiSpeaking(true);
+          ttsStartTimeRef.current = Date.now();
+          setTtsStartTime(Date.now());
+
+          const startGreetingListening = () => {
+            if (currentGenId !== speechGenerationIdRef.current) return;
+            setAiSpeaking(false);
+            setInterviewState(INTERVIEW_STATES.GREETING_LISTENING);
+            chunksRef.current = [];
+            setLiveTranscript("");
+            liveTranscriptRef.current = "";
+            setIsRecording(true);
+
+            greetingTimeoutRef.current = setTimeout(() => {
+              transitionFromGreetingToQ1();
+            }, 4500);
+          };
+
+          speak(chosenGreeting)
+            .then(startGreetingListening)
+            .catch(startGreetingListening);
+        }
+      } catch (err) {
+        if (err.response?.status === 401) {
+          navigate("/login");
+          return;
+        } else if (err.response?.status === 404) {
+          if (isMounted) setError("Interview session not found");
+        } else {
+          if (isMounted) setError(err.response?.data?.error || "Failed to load interview session");
+        }
+        if (isMounted) setLoading(false);
+      }
     };
 
-    speak(displayedQuestionText)
-      .then(autoStartRecordingWhenReady)
-      .catch(autoStartRecordingWhenReady);
-    fallbackTimeout = setTimeout(autoStartRecordingWhenReady, 12000);
+    init();
 
     return () => {
-      clearTimeout(fallbackTimeout);
-      clearTimeout(retryStreamInterval);
+      isMounted = false;
+      stopCamera();
+      clearInterval(timerRef.current);
+      if (greetingTimeoutRef.current) clearTimeout(greetingTimeoutRef.current);
       cancelTTS();
     };
-  }, [displayedQuestionText, loading, currentQuestionIndex, handleStartRecording, hasCompletedGreeting, interviewState]);
+  }, [sessionId, navigate, transitionFromGreetingToQ1]);
+
+  // Bind video element whenever loading finishes or stream is ready
+  useEffect(() => {
+    if (!loading && videoRef.current && streamRef.current) {
+      videoRef.current.srcObject = streamRef.current;
+    }
+  }, [loading, mediaStream]);
 
   const formatTime = (seconds) => {
     const mins = Math.floor(seconds / 60);
@@ -875,7 +942,7 @@ const intent = classifyInterruption(liveTranscriptRef.current);
 
   return (
     <div className="min-h-screen bg-[#0D0D0C] text-[#F0EEE8] flex flex-col font-sans select-none overflow-hidden">
-      {/* Editorial Top Navigation Header */}
+      {/* Top Header */}
       <header className="h-16 border-b border-[#2A2A28] px-6 flex items-center justify-between bg-[#111110]/95 backdrop-blur-md relative z-20">
         <div className="flex items-center gap-3">
           <div className="w-2.5 h-2.5 rounded-sm bg-[#1D5DFF]" />
@@ -885,17 +952,24 @@ const intent = classifyInterruption(liveTranscriptRef.current);
         </div>
 
         <div className="flex items-center gap-4">
-          {hasCompletedGreeting && currentQ?.track && (
-            <span className="font-mono text-[10px] uppercase px-2.5 py-1 rounded bg-[#161615] border border-[#2A2A28] text-[#1D5DFF]">
-              {currentQ.track === "project" ? "Project Track" : currentQ.track === "hr" ? "HR Track" : "Technical Subject"}
-            </span>
-          )}
+          {interviewState !== INTERVIEW_STATES.INITIALIZING &&
+            interviewState !== INTERVIEW_STATES.GREETING_SPEAKING &&
+            interviewState !== INTERVIEW_STATES.GREETING_LISTENING &&
+            interviewState !== INTERVIEW_STATES.GREETING_ACK &&
+            currentQ?.track && (
+              <span className="font-mono text-[10px] uppercase px-2.5 py-1 rounded bg-[#161615] border border-[#2A2A28] text-[#1D5DFF]">
+                {currentQ.track === "project" ? "Project Track" : currentQ.track === "hr" ? "HR Track" : "Technical Subject"}
+              </span>
+            )}
           <div className="font-mono text-xs text-[#6E6D68]">
             {interviewState === INTERVIEW_STATES.CLOSING_SPEAKING
               ? "Interview Closing"
-              : hasCompletedGreeting
-              ? `Question ${currentQuestionIndex + 1} / ${questions.length}`
-              : "Interview Welcome"}
+              : interviewState === INTERVIEW_STATES.INITIALIZING ||
+                interviewState === INTERVIEW_STATES.GREETING_SPEAKING ||
+                interviewState === INTERVIEW_STATES.GREETING_LISTENING ||
+                interviewState === INTERVIEW_STATES.GREETING_ACK
+              ? "Interview Welcome"
+              : `Question ${currentQuestionIndex + 1} / ${questions.length}`}
           </div>
         </div>
       </header>
@@ -925,21 +999,25 @@ const intent = classifyInterruption(liveTranscriptRef.current);
           )}
         </div>
 
-        {/* Right Sidebar: Question & AI Controls */}
+        {/* Right Sidebar: Question & AI Conversational Display */}
         <div className="w-full lg:w-[420px] flex flex-col gap-4 shrink-0">
           <div className="bg-[#161615] border border-[#2A2A28] rounded-2xl p-6 flex-1 flex flex-col justify-between shadow-2xl relative">
             {/* Countdown Progress Bar */}
-            {isRecording && hasCompletedGreeting && (
-              <div
-                className="absolute top-0 left-0 h-1 bg-[#1D5DFF] transition-all duration-1000 ease-linear rounded-t-2xl"
-                style={{ width: `${(timeLeft / 120) * 100}%` }}
-              />
-            )}
+            {isRecording &&
+              interviewState !== INTERVIEW_STATES.GREETING_LISTENING && (
+                <div
+                  className="absolute top-0 left-0 h-1 bg-[#1D5DFF] transition-all duration-1000 ease-linear rounded-t-2xl"
+                  style={{ width: `${(timeLeft / 120) * 100}%` }}
+                />
+              )}
 
             <div className="space-y-6">
-              {/* Question Card */}
+              {/* Question / AI Phrase Card */}
               <div className="bg-[#0D0D0C] border border-[#2A2A28] rounded-xl p-5 shadow-inner relative">
-                {!hasCompletedGreeting ? (
+                {interviewState === INTERVIEW_STATES.INITIALIZING ||
+                interviewState === INTERVIEW_STATES.GREETING_SPEAKING ||
+                interviewState === INTERVIEW_STATES.GREETING_LISTENING ||
+                interviewState === INTERVIEW_STATES.GREETING_ACK ? (
                   <div className="font-mono text-[10px] text-[#1D5DFF] tracking-widest uppercase mb-2">
                     AI Welcome & Orientation
                   </div>
@@ -957,7 +1035,7 @@ const intent = classifyInterruption(liveTranscriptRef.current);
                   </div>
                 ) : interviewState === INTERVIEW_STATES.TRANSITION_SPEAKING ? (
                   <div className="font-mono text-[10px] text-[#1D5DFF] tracking-widest uppercase mb-2">
-                    AI Transition
+                    AI Transition Bridge
                   </div>
                 ) : activeFollowUp ? (
                   <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-blue-950/60 border border-blue-500/30 text-blue-400 font-mono text-[10px] uppercase tracking-wider mb-2 animate-pulse">
@@ -970,7 +1048,7 @@ const intent = classifyInterruption(liveTranscriptRef.current);
                 )}
 
                 <h2 className="text-base lg:text-lg font-bold text-[#F0EEE8] leading-relaxed">
-                  "{!hasCompletedGreeting ? greetingText : interviewState === INTERVIEW_STATES.CLOSING_SPEAKING ? closingText : interviewState === INTERVIEW_STATES.CLARIFICATION_SPEAKING ? clarificationText : interviewState === INTERVIEW_STATES.REPEAT_ACK_SPEAKING ? repeatAckText : interviewState === INTERVIEW_STATES.TRANSITION_SPEAKING ? transitionText : displayedQuestionText}"
+                  "{interviewState === INTERVIEW_STATES.INITIALIZING || interviewState === INTERVIEW_STATES.GREETING_SPEAKING || interviewState === INTERVIEW_STATES.GREETING_LISTENING || interviewState === INTERVIEW_STATES.GREETING_ACK ? greetingText : interviewState === INTERVIEW_STATES.CLOSING_SPEAKING ? closingText : interviewState === INTERVIEW_STATES.CLARIFICATION_SPEAKING ? clarificationText : interviewState === INTERVIEW_STATES.REPEAT_ACK_SPEAKING ? repeatAckText : interviewState === INTERVIEW_STATES.TRANSITION_SPEAKING ? transitionText : displayedQuestionText}"
                 </h2>
               </div>
 
@@ -991,28 +1069,17 @@ const intent = classifyInterruption(liveTranscriptRef.current);
                           ? "Speaking..."
                           : "Listening to your answer..."
                         : aiSpeaking
-                        ? interviewState === INTERVIEW_STATES.CLOSING_SPEAKING
-                          ? "AI Closing Statement..."
-                          : "AI Speaking (Ask clarification or speak anytime)..."
+                        ? "AI Speaking (Speak anytime to interrupt)..."
                         : "Microphone Idle"}
                     </span>
                   </div>
-
-                  {interviewState === INTERVIEW_STATES.PROCESSING_ANSWER && (
-                    <span className="font-mono text-[10px] text-[#9A9990] animate-pulse">
-                      Processing...
-                    </span>
-                  )}
                 </div>
 
-                <div className="w-full pt-1">
+                <div className="h-10 bg-[#0D0D0C] border border-[#2A2A28] rounded-lg flex items-center justify-center px-4">
                   <LiveAudioVisualizer
-                    audioStream={streamRef.current}
-                    isRecording={isRecording}
-                    active={isRecording}
-                    barCount={50}
-                    color="#1D5DFF"
-                    inactiveColor="#3A3A38"
+                    isRecording={isRecording || isBargeInActive}
+                    isSpeaking={vad.isSpeaking}
+                    rms={vad.currentRms}
                   />
                 </div>
               </div>
@@ -1022,10 +1089,10 @@ const intent = classifyInterruption(liveTranscriptRef.current);
                 <div className="min-h-[48px] text-xs leading-relaxed text-[#F0EEE8]">
                   {liveTranscript || (
                     <span className="text-[#6E6D68] italic text-[11px]">
-                      {!hasCompletedGreeting
-                        ? interviewState === INTERVIEW_STATES.GREETING_SPEAKING
-                          ? "(Listening to AI welcome...)"
-                          : "(Say hello or ready to get started...)"
+                      {interviewState === INTERVIEW_STATES.INITIALIZING || interviewState === INTERVIEW_STATES.GREETING_SPEAKING
+                        ? "(Listening to AI welcome...)"
+                        : interviewState === INTERVIEW_STATES.GREETING_LISTENING
+                        ? "(Say hello or ready to get started...)"
                         : interviewState === INTERVIEW_STATES.CLOSING_SPEAKING
                         ? "(Finalizing session results...)"
                         : interviewState === INTERVIEW_STATES.CLARIFICATION_SPEAKING
@@ -1035,13 +1102,13 @@ const intent = classifyInterruption(liveTranscriptRef.current);
                         : interviewState === INTERVIEW_STATES.TRANSITION_SPEAKING
                         ? "(Transitioning to next question...)"
                         : isRecording
-                        ? "(Speak your response naturally... or ask 'Can you clarify?')"
+                        ? "(Speak your answer naturally... or ask 'Can you repeat?' / 'Can you clarify?')"
                         : isFollowUpLoading
                         ? "Formulating project follow-up question..."
                         : uploading
                         ? "Uploading answer telemetry..."
                         : aiSpeaking
-                        ? "(Listening to question audio...)"
+                        ? "(Listening to AI speech...)"
                         : "(Preparing next question...)"}
                     </span>
                   )}
@@ -1049,28 +1116,30 @@ const intent = classifyInterruption(liveTranscriptRef.current);
               </div>
             </div>
 
-            {/* Continuous Flow Status Section */}
+            {/* Continuous Flow Status & Fallback Controls */}
             <div className="mt-6 pt-5 border-t border-[#2A2A28] flex flex-col items-center space-y-4">
               <div className="text-3xl font-bold font-mono text-[#F0EEE8]">
-                {interviewState === INTERVIEW_STATES.CLOSING_SPEAKING ? "00:00" : hasCompletedGreeting ? formatTime(timeLeft) : "--:--"}
+                {interviewState === INTERVIEW_STATES.CLOSING_SPEAKING
+                  ? "00:00"
+                  : interviewState === INTERVIEW_STATES.GREETING_SPEAKING ||
+                    interviewState === INTERVIEW_STATES.GREETING_LISTENING ||
+                    interviewState === INTERVIEW_STATES.GREETING_ACK
+                  ? "--:--"
+                  : formatTime(timeLeft)}
               </div>
 
-              {/* Status Indicator */}
-              <div className="w-full">
-                {!hasCompletedGreeting ? (
-                  interviewState === INTERVIEW_STATES.GREETING_SPEAKING ? (
-                    <div className="w-full py-3 bg-[#161615] text-[#9A9990] rounded-xl font-mono text-xs tracking-wider uppercase border border-[#2A2A28] flex items-center justify-center gap-2">
-                      <span className="w-2 h-2 rounded-full bg-[#1D5DFF] animate-pulse" />
-                      AI Welcome Greeting
-                    </div>
-                  ) : (
-                    <button
-                      onClick={transitionFromGreetingToQ1}
-                      className="w-full py-3 bg-[#161615] hover:bg-[#20201F] text-[#1D5DFF] hover:text-white rounded-xl font-mono text-xs tracking-wider uppercase border border-[#2A2A28] hover:border-blue-500/40 transition-all flex items-center justify-center gap-2"
-                    >
-                      <span>I'm Ready (or speak to begin)</span>
-                    </button>
-                  )
+              {/* Voice-First Conversational Status Bar */}
+              <div className="w-full space-y-2">
+                {interviewState === INTERVIEW_STATES.GREETING_SPEAKING ? (
+                  <div className="w-full py-3 bg-[#161615] text-[#9A9990] rounded-xl font-mono text-xs tracking-wider uppercase border border-[#2A2A28] flex items-center justify-center gap-2">
+                    <span className="w-2 h-2 rounded-full bg-[#1D5DFF] animate-pulse" />
+                    AI Welcome Greeting
+                  </div>
+                ) : interviewState === INTERVIEW_STATES.GREETING_LISTENING ? (
+                  <div className="w-full py-3 bg-[#161615] text-emerald-400 rounded-xl font-mono text-xs tracking-wider uppercase border border-emerald-500/40 flex items-center justify-center gap-2">
+                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                    Listening: Say "Hello" or "I'm ready"
+                  </div>
                 ) : interviewState === INTERVIEW_STATES.CLOSING_SPEAKING ? (
                   <div className="w-full py-3 bg-[#161615] text-emerald-400 rounded-xl font-mono text-xs tracking-wider uppercase border border-emerald-500/40 flex items-center justify-center gap-2">
                     <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
@@ -1089,32 +1158,40 @@ const intent = classifyInterruption(liveTranscriptRef.current);
                 ) : interviewState === INTERVIEW_STATES.TRANSITION_SPEAKING ? (
                   <div className="w-full py-3 bg-[#161615] text-[#1D5DFF] rounded-xl font-mono text-xs tracking-wider uppercase border border-blue-900/40 flex items-center justify-center gap-2">
                     <span className="w-2 h-2 rounded-full bg-[#1D5DFF] animate-pulse" />
-                    AI Transition
+                    AI Transitioning
                   </div>
                 ) : interviewState === INTERVIEW_STATES.AI_SPEAKING ? (
                   <div className="w-full py-3 bg-[#161615] text-[#9A9990] rounded-xl font-mono text-xs tracking-wider uppercase border border-[#2A2A28] flex items-center justify-center gap-2">
                     <span className="w-2 h-2 rounded-full bg-[#1D5DFF] animate-pulse" />
-                    AI Asking Question
+                    AI Asking Question (Speak to interrupt)
                   </div>
                 ) : interviewState === INTERVIEW_STATES.PROCESSING_ANSWER || uploading || isFollowUpLoading ? (
                   <div className="w-full py-3 bg-[#161615] text-[#1D5DFF] rounded-xl font-mono text-xs tracking-wider uppercase border border-blue-900/40 flex items-center justify-center gap-2">
                     <div className="w-3.5 h-3.5 border-2 border-[#1D5DFF] border-t-transparent rounded-full animate-spin" />
-                    {isFollowUpLoading ? "Generating Project Follow-Up..." : "Submitting Answer & Advancing..."}
+                    {isFollowUpLoading ? "Formulating Follow-Up Question..." : "Answer Captured — Transitioning..."}
                   </div>
                 ) : isRecording ? (
-                  <div className="flex gap-2 w-full">
-                    <button
-                      onClick={handleRepeatQuestion}
-                      className="w-1/3 py-3 bg-[#161615] hover:bg-[#20201F] text-amber-400 hover:text-amber-300 rounded-xl font-mono text-xs tracking-wider uppercase border border-amber-900/40 hover:border-amber-700/50 transition-all flex items-center justify-center gap-1"
-                    >
-                      <span>Repeat</span>
-                    </button>
-                    <button
-                      onClick={() => triggerAnswerCompletion("manual_done")}
-                      className="w-2/3 py-3 bg-[#161615] hover:bg-[#20201F] text-[#9A9990] hover:text-[#F0EEE8] rounded-xl font-mono text-xs tracking-wider uppercase border border-[#2A2A28] hover:border-[#3A3A38] transition-all flex items-center justify-center gap-2"
-                    >
-                      <span>Done Answering</span>
-                    </button>
+                  <div className="space-y-2 w-full">
+                    <div className="w-full py-3 bg-[#161615] text-emerald-400 rounded-xl font-mono text-xs tracking-wider uppercase border border-emerald-500/40 flex items-center justify-center gap-2">
+                      <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                      Listening: Speak your answer naturally
+                    </div>
+
+                    {/* Secondary Fallback Controls (Accessible, non-intrusive) */}
+                    <div className="flex justify-between items-center px-1 pt-1">
+                      <button
+                        onClick={handleRepeatQuestion}
+                        className="text-[11px] font-mono text-[#6E6D68] hover:text-amber-400 transition-colors flex items-center gap-1"
+                      >
+                        <span>↺ Repeat Question</span>
+                      </button>
+                      <button
+                        onClick={() => triggerAnswerCompletion("manual_done")}
+                        className="text-[11px] font-mono text-[#6E6D68] hover:text-[#F0EEE8] transition-colors flex items-center gap-1"
+                      >
+                        <span>✓ Done Answering (Manual)</span>
+                      </button>
+                    </div>
                   </div>
                 ) : (
                   <div className="w-full py-3 bg-[#161615] text-[#6E6D68] rounded-xl font-mono text-xs tracking-wider uppercase border border-[#2A2A28] flex items-center justify-center">
