@@ -15,6 +15,7 @@ import adminRoutes from "./routes/admin.js";
 import writingRoutes from "./routes/writing.js";
 import reportRoutes from "./routes/reports.js";
 import storageRoutes from "./routes/storage.js";
+import ttsRoutes from "./routes/tts.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -93,6 +94,7 @@ app.use("/api/analysis", analysisRoutes);
 app.use("/api/sessions", writingRoutes);
 app.use("/api/reports", reportRoutes);
 app.use("/api/storage", storageRoutes);
+app.use("/api/tts", ttsRoutes);
 // Admin routes (faculty can manage question banks)
 app.use("/api/admin", adminRoutes);
 
