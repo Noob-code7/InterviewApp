@@ -1,4 +1,4 @@
-# AI Interview Practice Platform
+# AI Interview Practice Platform 
 
 A real-time AI-powered interview simulator with facial analysis, voice analysis, NLP answer scoring, and a comprehensive performance report.
 
@@ -8,7 +8,7 @@ A real-time AI-powered interview simulator with facial analysis, voice analysis,
 |-------|-----------|
 | Frontend | React + Vite, Tailwind CSS, Zustand, React Router v6 |
 | Backend | Node.js, Express.js, MongoDB Atlas, BullMQ + Redis |
-| AI Services | Python FastAPI (×5 microservices) |
+| AI Services | Python FastAPI (×5 microservices) | 
 | Media Storage | Cloudinary |
 | Async Queues | BullMQ + Redis |
 
