@@ -43,3 +43,6 @@ SER_model/*.zip
 
 # Local LLM / SLM weights (avoid committing model binaries)
 ai-services/nlp-service/models/
+
+# Kokoro TTS model binaries (download on startup, do not commit)
+ai-services/voice-service/models/

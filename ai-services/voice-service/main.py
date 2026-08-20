@@ -9,10 +9,12 @@ import soundfile as sf
 import librosa
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import Response
 from dotenv import load_dotenv
 from pydantic import BaseModel
 
 from model import Speech_emotion
+from kokoro_tts import TtsEngine, ensure_model_files
 
 load_dotenv()
 
@@ -39,6 +41,7 @@ EMOTION_LABELS = [
 # Global model instances
 model = None
 whisper_stt_model = None
+tts_engine = None
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
@@ -114,6 +117,33 @@ def load_models():
         except Exception as fallback_err:
             print(f"[Voice Service] Whisper fallback note: {fallback_err}")
 
+    # 3. Kokoro TTS: ensure model files exist (non-fatal), lazy-load the engine
+    global tts_engine
+    model_path, voices_path = ensure_model_files()
+    if model_path and voices_path:
+        tts_engine = TtsEngine(
+            model_path=model_path,
+            voices_path=voices_path,
+            voice=os.getenv("KOKORO_VOICE", "af_heart").strip() or "af_heart",
+            cache_enabled=os.getenv("KOKORO_CACHE_ENABLED", "true").lower() == "true",
+            num_threads=int(os.getenv("KOKORO_NUM_THREADS", "16").strip() or 0),
+        )
+        print("[Voice Service] Kokoro TTS engine ready (lazy model load on first request)")
+
+        # Preload the model in the background so the first real request is fast.
+        import threading
+
+        def _preload_kokoro():
+            try:
+                tts_engine._load()
+                print("[Voice Service] Kokoro TTS model preloaded (background)")
+            except Exception as e:
+                print(f"[Voice Service] Kokoro TTS preload failed: {e}")
+
+        threading.Thread(target=_preload_kokoro, daemon=True).start()
+    else:
+        print("[Voice Service] Kokoro TTS unavailable - model files could not be ensured (frontend will fall back to speechSynthesis)")
+
 
 class VoiceAnalysisResult(BaseModel):
     transcript: str
@@ -124,6 +154,12 @@ class VoiceAnalysisResult(BaseModel):
     clarityScore: float
     emotionProbabilities: dict
     dominantEmotion: str
+
+
+class TtsRequest(BaseModel):
+    text: str
+    voice: str | None = None
+    rate: float = 1.0
 
 
 def transcribe_audio_file(audio_path: str) -> str:
@@ -202,8 +238,35 @@ async def health():
             "port": 8002,
             "ser_model_loaded": model is not None,
             "stt_model_loaded": whisper_stt_model is not None,
+            "tts_model_loaded": tts_engine is not None and tts_engine.is_ready(),
+            "tts_voice": tts_engine.default_voice if tts_engine is not None else None,
         },
     }
+
+
+@app.post("/tts")
+async def synthesize_speech(req: TtsRequest):
+    """
+    Synthesize speech from text using Kokoro TTS and return a WAV file.
+    Returns 503 when TTS is unavailable (frontend should fall back to speechSynthesis).
+    """
+    if tts_engine is None:
+        raise HTTPException(
+            status_code=503,
+            detail="TTS unavailable: model files could not be ensured on startup",
+        )
+
+    text = req.text.strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="text must not be empty")
+    if len(text) > 2000:
+        raise HTTPException(status_code=400, detail="text too long (max 2000 chars)")
+
+    wav_bytes = tts_engine.synth_wav(text, voice=req.voice, speed=req.rate)
+    if wav_bytes is None:
+        raise HTTPException(status_code=503, detail="TTS synthesis failed")
+
+    return Response(content=wav_bytes, media_type="audio/wav")
 
 
 @app.post("/transcribe")

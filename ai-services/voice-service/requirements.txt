@@ -9,3 +9,4 @@ librosa>=0.10.2
 soundfile>=0.12.1
 numpy>=1.26.4
 torch>=2.0.0
+kokoro-onnx>=0.6.1
