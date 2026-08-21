@@ -27,6 +27,9 @@ export const transcribeAndEvaluate = [
   async (req, res) => {
     try {
       const { sessionId, questionId, questionIndex: bodyQuestionIndex } = req.body;
+      // Client-provided spoken question text: only trusted when the slot identity
+      // (questionId) matches the session's stored slot - see Strategy 1 below.
+      const clientQuestionText = (req.body.questionText || "").trim();
       if (!req.file) return sendError(res, "No audio file uploaded", 400);
 
       const audioPath = req.file.filename;
@@ -99,7 +102,31 @@ export const transcribeAndEvaluate = [
           }
 
           if (targetIndex !== -1) {
-            questionText = session.answers[targetIndex].questionText || questionText;
+            const storedSlot = session.answers[targetIndex];
+            // Identity-validated spoken-question preference: the candidate was
+            // asked what the frontend displayed. If the payload's questionId
+            // resolves to this exact slot (Strategy 1 match on questionId/_id),
+            // the client's questionText is the ground truth of what was spoken
+            // and wins over stored text. Index-only matches (Strategies 2/3)
+            // carry no identity proof, so stored text is kept.
+            const identityMatched =
+              targetParentId === String(storedSlot.questionId) ||
+              targetParentId === String(storedSlot._id);
+            if (identityMatched && clientQuestionText) {
+              questionText = clientQuestionText;
+              // Heal the stored slot if a stale/other assembly wrote different text
+              // (targeted positional update - no full-document overwrite races)
+              if (storedSlot.questionText !== clientQuestionText) {
+                try {
+                  await Session.updateOne(
+                    { _id: session._id, "answers.questionId": String(storedSlot.questionId) },
+                    { $set: { "answers.$.questionText": clientQuestionText } }
+                  );
+                } catch (e) {}
+              }
+            } else {
+              questionText = storedSlot.questionText || questionText;
+            }
           }
         }
       }

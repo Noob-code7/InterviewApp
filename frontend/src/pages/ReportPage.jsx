@@ -245,7 +245,7 @@ export default function ReportPage() {
                   />
                 </div>
               </div>
-              <span className="text-xs text-[#6E6D68] font-inter">Pacing, pitch stability & emotional fluency</span>
+              <span className="text-xs text-[#6E6D68] font-inter">Vocal tone, speaking pace & clarity analysis</span>
             </div>
 
             {/* Visual & Facial */}

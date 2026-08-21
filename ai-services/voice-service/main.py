@@ -1,4 +1,7 @@
 import os
+import re
+import io
+import asyncio
 import tempfile
 import hashlib
 import urllib.request
@@ -154,6 +157,7 @@ class VoiceAnalysisResult(BaseModel):
     clarityScore: float
     emotionProbabilities: dict
     dominantEmotion: str
+    audioDecoded: bool = True  # False = audio could not be decoded; SER output is not trustworthy
 
 
 class TtsRequest(BaseModel):
@@ -162,14 +166,16 @@ class TtsRequest(BaseModel):
     rate: float = 1.0
 
 
-def transcribe_audio_file(audio_path: str) -> str:
+def transcribe_audio_file(audio_path: str):
     """
     Transcribes audio file using faster-whisper (or fallback whisper).
+    Returns (transcript, avg_logprob) where avg_logprob is Whisper's own
+    per-segment acoustic confidence signal (higher = clearer speech).
     Handles silence, empty audio, background noise, and non-speech artifacts.
     """
     global whisper_stt_model
     if whisper_stt_model is None:
-        return "Audio recorded. STT transcription processing."
+        return "Audio recorded. STT transcription processing.", -1.0
 
     try:
         # Check if faster-whisper model
@@ -180,32 +186,67 @@ def transcribe_audio_file(audio_path: str) -> str:
                 language="en",
                 vad_filter=True,  # Voice activity detection to filter silence
             )
-            text_parts = [segment.text.strip() for segment in segments if segment.text]
+            text_parts = []
+            logprobs = []
+            for segment in segments:
+                if segment.text:
+                    text_parts.append(segment.text.strip())
+                    if segment.avg_logprob is not None:
+                        logprobs.append(segment.avg_logprob)
             transcript = " ".join(text_parts).strip()
-            return transcript if transcript else "Candidate provided verbal response."
+            avg_logprob = sum(logprobs) / len(logprobs) if logprobs else -1.0
+            return (transcript if transcript else "Candidate provided verbal response."), avg_logprob
         else:
             # Fallback openai-whisper
             res = whisper_stt_model.transcribe(audio_path)
             transcript = res.get("text", "").strip()
-            return transcript if transcript else "Candidate provided verbal response."
+            return (transcript if transcript else "Candidate provided verbal response."), -1.0
     except Exception as err:
         print(f"[Voice Service] STT Transcription error: {err}")
-        return "Audio recorded. Transcription completed with fallback."
+        return "Audio recorded. Transcription completed with fallback.", -1.0
+
+
+def _decode_with_av(audio_path: str, target_sr: int = 16000):
+    """Decode any container (webm/opus, mp3, m4a...) using bundled FFmpeg libs via PyAV."""
+    import av
+    container = av.open(audio_path)
+    resampler = av.AudioResampler(format="s16", layout="mono", rate=target_sr)
+    frames = []
+    for frame in container.decode(audio=0):
+        for resampled in resampler.resample(frame):
+            arr = resampled.to_ndarray()
+            if arr.ndim > 1:
+                arr = arr.mean(axis=1)
+            frames.append(arr)
+    container.close()
+    if not frames:
+        raise ValueError("no audio frames decoded")
+    y = np.concatenate(frames).astype("float32") / 32768.0
+    return y, target_sr
 
 
 def preprocess_audio(audio_path: str, target_sr: int = 16000, max_len: int = 64000):
+    """
+    Returns (chunks, duration_seconds, decoded_flag).
+    Never raises: on total decode failure returns zero-chunk with decoded_flag=False
+    so callers can flag the analysis instead of silently scoring silence.
+    """
+    duration_seconds = 0.0
     try:
-        y, sr = sf.read(audio_path, dtype="float32")
-        if y.ndim > 1:
-            y = y.mean(axis=1)
+        try:
+            y, sr = sf.read(audio_path, dtype="float32")
+            if y.ndim > 1:
+                y = y.mean(axis=1)
+        except Exception:
+            # soundfile cannot handle webm/opus containers -> PyAV (bundled ffmpeg)
+            y, sr = _decode_with_av(audio_path, target_sr)
         if sr != target_sr:
             y = librosa.resample(y, orig_sr=sr, target_sr=target_sr)
-    except Exception as read_err:
-        try:
-            y, sr = librosa.load(audio_path, sr=target_sr)
-        except Exception as librosa_err:
-            print(f"[Voice Service] Audio read error for {audio_path}: {librosa_err}")
-            return [np.zeros(max_len, dtype="float32")]
+        duration_seconds = len(y) / float(target_sr)
+    except Exception as decode_err:
+        print(f"[Voice Service] AUDIO DECODE FAILED for {audio_path}: {decode_err} "
+              f"- SER will be flagged as not-decoded instead of analyzing silence.")
+        return [np.zeros(max_len, dtype="float32")], 0.0, False
 
     total_samples = len(y)
 
@@ -213,19 +254,19 @@ def preprocess_audio(audio_path: str, target_sr: int = 16000, max_len: int = 640
         padded = np.pad(y, (0, max_len - total_samples), mode="constant")
         std = padded.std()
         normalized = (padded - padded.mean()) / (std if std > 1e-7 else 1e-7)
-        return [normalized]
+        return [normalized], duration_seconds, True
 
     chunks = []
     for start in range(0, total_samples, max_len):
         chunk = y[start : start + max_len]
         if len(chunk) < max_len:
             chunk = np.pad(chunk, (0, max_len - len(chunk)), mode="constant")
-        
+
         std = chunk.std()
         normalized_chunk = (chunk - chunk.mean()) / (std if std > 1e-7 else 1e-7)
         chunks.append(normalized_chunk)
 
-    return chunks
+    return chunks, duration_seconds, True
 
 
 @app.get("/health")
@@ -262,7 +303,10 @@ async def synthesize_speech(req: TtsRequest):
     if len(text) > 2000:
         raise HTTPException(status_code=400, detail="text too long (max 2000 chars)")
 
-    wav_bytes = tts_engine.synth_wav(text, voice=req.voice, speed=req.rate)
+    # Offload to a worker thread: Kokoro inference is CPU-bound and would
+    # otherwise freeze the event loop, head-of-line blocking every other
+    # /tts request (including the greeting) behind pre-synthesis bursts.
+    wav_bytes = await asyncio.to_thread(tts_engine.synth_wav, text, req.voice, req.rate)
     if wav_bytes is None:
         raise HTTPException(status_code=503, detail="TTS synthesis failed")
 
@@ -305,12 +349,13 @@ async def analyze_voice(audio: UploadFile = File(...)):
         temp_audio_path = temp_audio.name
 
     transcript = "Candidate provided verbal response."
+    avg_logprob = -1.0
     try:
         # 1. Faster-Whisper Speech-To-Text Transcription
-        transcript = transcribe_audio_file(temp_audio_path)
+        transcript, avg_logprob = transcribe_audio_file(temp_audio_path)
 
         # 2. Audio preprocessing for SER PyTorch model
-        chunks = preprocess_audio(temp_audio_path)
+        chunks, audio_duration_s, audio_decoded = preprocess_audio(temp_audio_path)
     except Exception as e:
         raise HTTPException(
             status_code=400, detail=f"Failed to process audio file: {str(e)}"
@@ -342,6 +387,10 @@ async def analyze_voice(audio: UploadFile = File(...)):
 
     word_count = len(transcript.split()) if transcript and not transcript.startswith("Audio recorded") and not transcript.startswith("Candidate provided") else 0
 
+    # Real filler-word count from the actual transcript (not derived from emotions)
+    FILLER_PATTERN = re.compile(r"\b(um+|uh+|erm|hmm+|like|basically|actually|literally|you know|i mean|sort of|kind of)\b", re.IGNORECASE)
+    filler_word_count = len(FILLER_PATTERN.findall(transcript)) if word_count >= 3 else 0
+
     if word_count < 3:
         # Silence or no speech input detected
         confidence_score = 0.0
@@ -361,19 +410,34 @@ async def analyze_voice(audio: UploadFile = File(...)):
             + emotion_probs_dict.get("disgust", 0) * 1.5
         )
         confidence_score = float(np.clip(positive_score - negative_score, 0.0, 100.0))
-        fluency_score = float(np.clip(85.0 - (emotion_probs_dict.get("fearful", 0) * 0.5), 0.0, 98.0))
-        clarity_score = float(np.clip(88.0 - (emotion_probs_dict.get("disgust", 0) * 0.5), 0.0, 98.0))
-        speaking_speed = float(round(min(180.0, max(110.0, word_count * 4.0)), 1))
+
+        # Real speaking pace: words per minute measured against actual audio duration
+        if audio_decoded and audio_duration_s >= 1.0:
+            speaking_speed = float(np.clip(round(word_count / audio_duration_s * 60.0, 1), 60.0, 220.0))
+        else:
+            speaking_speed = float(round(min(180.0, max(110.0, word_count * 4.0)), 1))
+
+        # Fluency: penalize deviation from a natural 100-160 WPM band plus real fillers
+        fillers_per_10 = (filler_word_count / word_count) * 10.0
+        wpm_deviation = abs(speaking_speed - 130.0)
+        fluency_score = float(np.clip(98.0 - (wpm_deviation * 0.25) - (fillers_per_10 * 2.5), 40.0, 98.0))
+
+        # Clarity: grounded in Whisper's own acoustic confidence (avg_logprob ~[-1.5, 0.3])
+        if avg_logprob > -1.0:
+            clarity_score = float(np.clip(70.0 + (avg_logprob + 1.0) * 30.0, 30.0, 98.0))
+        else:
+            clarity_score = float(np.clip(88.0 - (emotion_probs_dict.get("disgust", 0) * 0.5), 0.0, 98.0))
 
     result = VoiceAnalysisResult(
         transcript=transcript if word_count >= 3 else "",
         confidenceScore=round(confidence_score, 1),
         fluencyScore=round(fluency_score, 1),
-        fillerWordCount=int(max(0, round(emotion_probs_dict.get("fearful", 0) * 0.1))) if word_count >= 3 else 0,
+        fillerWordCount=int(filler_word_count),
         speakingSpeed=speaking_speed,
         clarityScore=round(clarity_score, 1),
         emotionProbabilities=emotion_probs_dict,
         dominantEmotion=dominant_emotion,
+        audioDecoded=bool(audio_decoded),
     )
 
     return {"success": True, "data": result.model_dump()}

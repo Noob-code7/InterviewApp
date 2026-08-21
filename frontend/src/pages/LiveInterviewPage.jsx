@@ -15,8 +15,9 @@ import {
   getRandomItem,
 } from "../utils/interviewConversationalPatterns.js";
 
-// Diagnostic trace function
+// Diagnostic trace function (dev-only: no-ops in production builds)
 const trace = (event, data = {}) => {
+  if (import.meta.env && import.meta.env.DEV === false) return;
   console.log(`[LIVE-TRACE ${performance.now().toFixed(0)}] ${event}`, data);
 };
 
@@ -145,7 +146,7 @@ export default function LiveInterviewPage() {
         audio: {
           echoCancellation: true,
           noiseSuppression: true,
-          autoGainControl: true,
+          autoGainControl: false,
         },
       });
       streamRef.current = stream;
@@ -336,7 +337,18 @@ export default function LiveInterviewPage() {
     ttsStartTimeRef.current = Date.now();
     setTtsStartTime(Date.now());
 
-speak(textToSpeak)
+    // Split-prefix playback: the acknowledgment phrase and the bare question are
+    // each pre-cached at room entry, so playing them sequentially avoids the
+    // multi-second synthesis miss of the combined "{prefix} {question}" key.
+    const speechPromise = customPrefix
+      ? speak(customPrefix).then(() => {
+          // Barge-in may have cancelled us during the prefix - never start the question then.
+          if (currentGenId !== speechGenerationIdRef.current) return;
+          return speak(rawQuestionText);
+        })
+      : speak(rawQuestionText);
+
+    speechPromise
       .then(() => {
         if (currentGenId !== speechGenerationIdRef.current) {
           trace("playQuestionTTS_cancelled", { genId: currentGenId, currentGenId: speechGenerationIdRef.current });
@@ -350,9 +362,14 @@ speak(textToSpeak)
         questionToReplayIndexRef.current = null;
         isBargeInContinuationRef.current = false;
         // Record question history when question is genuinely delivered
-        interviewApi.recordQuestionHistory(sessionId, questionsRef.current).catch((err) => {
-          console.warn("[InterviewEngine] Failed to record question history:", err);
-        });
+        recordQuestionHistoryOnce();
+
+        // Proactively pre-synthesize the NEXT question in background while candidate speaks!
+        const nextQ = questionsRef.current[questionIndex + 1];
+        if (nextQ?.questionText) {
+          preSynthesize(nextQ.questionText);
+        }
+
         vad.startSession?.();
         startAnswerRecordingRef.current?.();
       })
@@ -368,6 +385,23 @@ speak(textToSpeak)
   }, []);
 
   playQuestionTTSRef.current = playQuestionTTS;
+
+  // Question-history recorder with signature dedupe: both the question-completion
+  // and transition paths previously re-upserted the identical full list on every
+  // question, causing N× redundant DB writes per interview.
+  const questionHistorySignatureRef = useRef("");
+  const recordQuestionHistoryOnce = useCallback(() => {
+    try {
+      const signature = (questionsRef.current || [])
+        .map((q) => `${q.questionId || q._id || ""}:${q.questionText || ""}`)
+        .join("|");
+      if (!signature || signature === questionHistorySignatureRef.current) return;
+      questionHistorySignatureRef.current = signature;
+      interviewApi.recordQuestionHistory(sessionId, questionsRef.current).catch((err) => {
+        console.warn("[InterviewEngine] Failed to record question history:", err);
+      });
+    } catch (e) {}
+  }, [sessionId]);
 
   // --------------------------------------------------------------------------
   // Transition from Greeting to Question 1
@@ -388,6 +422,7 @@ speak(textToSpeak)
     }
     if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
       try {
+        mediaRecorderRef.current.onstop = null;
         mediaRecorderRef.current.stop();
       } catch (e) {}
     }
@@ -444,9 +479,7 @@ speak(textToSpeak)
         questionToReplayIndexRef.current = null;
         isBargeInContinuationRef.current = false;
         // Record question history for the next question
-        interviewApi.recordQuestionHistory(sessionId, questionsRef.current).catch((err) => {
-          console.warn("[InterviewEngine] Failed to record question history:", err);
-        });
+        recordQuestionHistoryOnce();
         vad.startSession?.();
         playQuestionTTSRef.current?.(nextIndex);
       })
@@ -774,27 +807,26 @@ speak(textToSpeak)
     stream: mediaStream,
     enabled: isCandidateActiveListening,
     bargeInEnabled: isBargeInActive,
-    speechThreshold: 0.012,
-    bargeInThreshold: 0.018,
-    bargeInSustainMs: 120,
+    speechThreshold: 0.022,
+    bargeInThreshold: 0.026,
+    bargeInSustainMs: 200,
     silenceThresholdMs: 1800,
-    thinkingGracePeriodMs: 3000,
-    minAnswerDurationMs: interviewState === INTERVIEW_STATES.GREETING_LISTENING ? 800 : 1800,
-    minWordCount: interviewState === INTERVIEW_STATES.GREETING_LISTENING ? 1 : 2,
+    thinkingGracePeriodMs: 2800,
+    minAnswerDurationMs: 800,
+    minWordCount: 1,
     ttsStartTime,
     onSpeechStart: () => {
-      // When candidate starts speaking during greeting, set a 3.5s extension so they are not cut off
+      // User is actively speaking — cancel any inactivity timeout so they are never interrupted
       if (interviewStateRef.current === INTERVIEW_STATES.GREETING_LISTENING) {
-        if (greetingTimeoutRef.current) clearTimeout(greetingTimeoutRef.current);
-        greetingTimeoutRef.current = setTimeout(() => {
-          trace("greeting_speech_grace_timeout");
-          transitionFromGreetingToQ1Ref.current?.();
-        }, 3500);
+        if (greetingTimeoutRef.current) {
+          clearTimeout(greetingTimeoutRef.current);
+          greetingTimeoutRef.current = null;
+        }
       }
     },
     onAnswerComplete: ({ reason, silenceDuration, wordCount, duration }) => {
       if (interviewStateRef.current === INTERVIEW_STATES.GREETING_LISTENING) {
-        console.log(`[GreetingEngine] Greeting response detected (${wordCount} words, duration ${duration}ms). Transitioning to ack.`);
+        console.log(`[GreetingEngine] Greeting response detected (${wordCount} words, duration ${duration}ms). Transitioning to Question 1.`);
         if (greetingTimeoutRef.current) {
           clearTimeout(greetingTimeoutRef.current);
           greetingTimeoutRef.current = null;
@@ -851,21 +883,23 @@ speak(textToSpeak)
         questionToReplay: questionToReplayIndexRef.current
       });
 
-      // 1. Upload Video Chunk
-      if (activeFollowUpRef.current) {
-        await interviewApi.uploadAnswer(sessionId, currentQ.questionId, blob, {
-          isFollowUp: true,
-          turn: followUpTurn,
-          questionText: activeFollowUpRef.current.questionText,
-        });
-      } else {
-        await interviewApi.uploadAnswer(sessionId, currentQ.questionId, blob, {
-          questionIndex,
-          questionText: currentQ.questionText,
-        });
-      }
+      // 1. Dispatch Video Upload & Analysis in the Background (Non-blocking)
+      const uploadPayload = activeFollowUpRef.current
+        ? {
+            isFollowUp: true,
+            turn: followUpTurn,
+            questionText: activeFollowUpRef.current.questionText,
+          }
+        : {
+            questionIndex,
+            questionText: currentQ.questionText,
+          };
 
-      // 2. Dispatch Live STT Telemetry
+      interviewApi
+        .uploadAnswer(sessionId, currentQ.questionId, blob, uploadPayload)
+        .catch((err) => console.error("[InterviewEngine] Background upload error:", err));
+
+      // 2. Dispatch Live STT Telemetry in Background
       try {
         const fd = new FormData();
         fd.append("audio", blob, "answer.webm");
@@ -880,10 +914,12 @@ speak(textToSpeak)
         console.error("Transcription setup error:", err);
       }
 
-      // 3. Dynamic Interactive Follow-Up Logic (Project Questions Only)
-      const isProjectTrack = currentQ.track === "project" || currentQ.projectContext != null;
+      // 3. Dynamic Interactive Follow-Up Logic (Project & Technical Questions)
+      const isFollowUpEligible =
+        (currentQ.track === "project" || currentQ.projectContext != null || currentQ.track === "subject") &&
+        currentQIndexRef.current > 0;
 
-      if (isProjectTrack && followUpTurn < 2 && currentAnswerText.trim().split(/\s+/).length >= 4) {
+      if (isFollowUpEligible && followUpTurn < 2 && currentAnswerText.trim().split(/\s+/).length >= 4) {
         setIsFollowUpLoading(true);
         try {
           const currentFollowUpList = [
@@ -898,7 +934,7 @@ speak(textToSpeak)
             questionId: currentQ.questionId,
             questionText: activeFollowUpRef.current?.questionText || currentQ.questionText,
             answerText: currentAnswerText,
-            projectContext: currentQ.projectContext || {},
+            projectContext: currentQ.projectContext || { title: currentQ.questionText },
             turnCount: followUpTurn + 1,
             previousFollowUps: currentFollowUpList,
           });
@@ -915,6 +951,9 @@ speak(textToSpeak)
             chunksRef.current = [];
             setLiveTranscript("");
             liveTranscriptRef.current = "";
+            // Pre-synthesize the follow-up NOW so playback starts without a
+            // multi-second synthesis gap after the LLM latency already paid.
+            if (nextFollowUp.questionText) preSynthesize(nextFollowUp.questionText);
             playQuestionTTSRef.current?.(currentQIndexRef.current);
             return;
           }
@@ -986,10 +1025,30 @@ speak(textToSpeak)
 
     const init = async () => {
       try {
-        const { data } = await sessionsApi.get(sessionId);
+        const chosenGreeting = getRandomItem(INTERVIEW_GREETINGS);
+        setGreetingText(chosenGreeting);
+
+        // 1. Immediately kick off background audio pre-synthesis for greeting & standard phrases
+        // Greeting goes FIRST so it wins the synthesis queue; the remaining room
+        // phrases follow staggered. Closing statements are deferred entirely -
+        // they are not needed until the interview ends.
+        preSynthesize(chosenGreeting);
+        setTimeout(() => {
+          [
+            ...GREETING_ACKNOWLEDGEMENTS,
+            ...QUESTION_TRANSITIONS,
+          ].forEach((phrase) => preSynthesize(phrase));
+        }, 400);
+
+        // 2. Concurrently initialize camera hardware, fetch session data, and generate questions
+        const [stream, sessionRes, qRes] = await Promise.all([
+          startCamera(),
+          sessionsApi.get(sessionId),
+          interviewApi.generateQuestions(sessionId),
+        ]);
         if (isCancelled) return;
 
-        const fetchedSession = data?.data?.session;
+        const fetchedSession = sessionRes?.data?.data?.session;
         if (!fetchedSession) {
           setError("Session not found");
           setLoading(false);
@@ -998,13 +1057,9 @@ speak(textToSpeak)
 
         setSession(fetchedSession);
 
-        // Fetch or generate questions
-        const qRes = await interviewApi.generateQuestions(sessionId);
-        if (isCancelled) return;
-
         const fetchedQuestions =
-          qRes.data?.data?.questions ||
-          qRes.data?.data?.session?.answers ||
+          qRes?.data?.data?.questions ||
+          qRes?.data?.data?.session?.answers ||
           fetchedSession?.answers ||
           [];
 
@@ -1014,23 +1069,15 @@ speak(textToSpeak)
           return;
         }
 
-        const chosenGreeting = getRandomItem(INTERVIEW_GREETINGS);
         setQuestions(fetchedQuestions);
         questionsRef.current = fetchedQuestions;
-        setGreetingText(chosenGreeting);
         setLoading(false);
 
-        preSynthesize(chosenGreeting);
-        [
-          ...GREETING_ACKNOWLEDGEMENTS,
-          ...QUESTION_TRANSITIONS,
-          ...CLOSING_STATEMENTS,
-        ].forEach((phrase) => preSynthesize(phrase));
+        // 3. Proactively pre-synthesize Question 0 (and Question 1) immediately in background
+        if (fetchedQuestions[0]?.questionText) preSynthesize(fetchedQuestions[0].questionText);
+        if (fetchedQuestions[1]?.questionText) preSynthesize(fetchedQuestions[1].questionText);
 
-        await startCamera();
-        if (isCancelled) return;
-
-        // Start Greeting Delivery after camera is initialized
+        // 4. Start Greeting Delivery immediately (audio is already cached in memory)
         const currentGenId = ++speechGenerationIdRef.current;
         setInterviewState(INTERVIEW_STATES.GREETING_SPEAKING);
         setAiSpeaking(true);
@@ -1045,6 +1092,9 @@ speak(textToSpeak)
           setLiveTranscript("");
           liveTranscriptRef.current = "";
           setIsRecording(true);
+
+          vad.startSession?.();
+          startAnswerRecordingRef.current?.("", false);
 
           // Greeting inactivity fallback: 4.5 seconds if candidate stays silent
           greetingTimeoutRef.current = setTimeout(() => {
@@ -1241,9 +1291,7 @@ speak(textToSpeak)
                     />
                     <span className="font-mono text-xs text-[#1D5DFF] tracking-wider uppercase font-medium">
                       {isRecording
-                        ? interviewState === INTERVIEW_STATES.GREETING_LISTENING
-                          ? "Listening to greeting..."
-                          : vad.isSpeaking
+                        ? vad.isSpeaking
                           ? "Speaking..."
                           : "Listening to your answer..."
                         : aiSpeaking
@@ -1270,8 +1318,6 @@ speak(textToSpeak)
                     <span className="text-[#6E6D68] italic text-[11px]">
                       {interviewState === INTERVIEW_STATES.INITIALIZING || interviewState === INTERVIEW_STATES.GREETING_SPEAKING
                         ? "(Listening to AI welcome...)"
-                        : interviewState === INTERVIEW_STATES.GREETING_LISTENING
-                        ? "(Say hello or ready to get started...)"
                         : interviewState === INTERVIEW_STATES.CLOSING_SPEAKING
                         ? "(Finalizing session results...)"
                         : interviewState === INTERVIEW_STATES.TRANSITION_SPEAKING
@@ -1311,9 +1357,19 @@ speak(textToSpeak)
                     AI Welcome Greeting
                   </div>
                 ) : interviewState === INTERVIEW_STATES.GREETING_LISTENING ? (
-                  <div className="w-full py-3 bg-[#161615] text-emerald-400 rounded-xl font-mono text-xs tracking-wider uppercase border border-emerald-500/40 flex items-center justify-center gap-2">
-                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-                    Listening: Say "Hello" or "I'm ready"
+                  <div className="space-y-2 w-full">
+                    <div className="w-full py-3 bg-[#161615] text-emerald-400 rounded-xl font-mono text-xs tracking-wider uppercase border border-emerald-500/40 flex items-center justify-center gap-2">
+                      <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                      Listening: Speak naturally
+                    </div>
+                    <div className="flex justify-center items-center px-1 pt-1">
+                      <button
+                        onClick={() => transitionFromGreetingToQ1Ref.current?.()}
+                        className="text-[11px] font-mono text-[#6E6D68] hover:text-[#1D5DFF] transition-colors flex items-center gap-1 cursor-pointer"
+                      >
+                        <span>→ Begin Question 1</span>
+                      </button>
+                    </div>
                   </div>
                 ) : interviewState === INTERVIEW_STATES.CLOSING_SPEAKING ? (
                   <div className="w-full py-3 bg-[#161615] text-emerald-400 rounded-xl font-mono text-xs tracking-wider uppercase border border-emerald-500/40 flex items-center justify-center gap-2">

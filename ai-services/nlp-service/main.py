@@ -1,12 +1,25 @@
 import os
 import re
-import math
-import json
+import threading
 from typing import Optional, List, Dict, Any
-from fastapi import FastAPI, HTTPException, File, UploadFile
+from fastapi import FastAPI, HTTPException, File, UploadFile, Form
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from dotenv import load_dotenv
+from spacy_evaluator import (
+    nlp as spacy_nlp,
+    phrase_matches_text,
+    compute_concept_coverage_spacy,
+    analyze_answer_substance,
+    is_keyword_dump,
+    detect_misconceptions
+)
+from semantic_evaluator import (
+    get_semantic_model,
+    compute_semantic_similarity,
+    compute_semantic_concept_alignment,
+    compute_semantic_keyword_matches
+)
 
 load_dotenv()
 
@@ -47,34 +60,30 @@ class NLPResult(BaseModel):
     feedback: str
     strengths: List[str]
     improvements: List[str]
-    evaluationEngine: str = "local_nlp"
+    semanticSimilarity: float = 0.0
+    semanticConceptsMatched: List[str] = []
+    misconceptionsDetected: List[str] = []
+    evaluationEngine: str = "spacy_semantic_nlp"
+
+
+_semantic_model_ready = threading.Event()
+
+@app.on_event("startup")
+async def startup_event():
+    """Warm the Sentence Transformer model in a background thread so the
+    service starts accepting requests immediately instead of blocking
+    uvicorn's startup for ~10s. /analyze waits on the readiness event."""
+    def _warm():
+        try:
+            get_semantic_model()
+            _semantic_model_ready.set()
+            print("[NLP-Service] spaCy and SentenceTransformer (all-MiniLM-L6-v2) successfully loaded.")
+        except Exception as e:
+            print(f"[NLP-Service] Warning during model warmup: {e}")
+    threading.Thread(target=_warm, daemon=True).start()
 
 
 # ── Local NLP Concept & Semantic Analysis Engine ────────────────────────────────
-
-STOPWORDS = {
-  "a", "an", "the", "and", "or", "but", "if", "is", "are", "was", "were", "be",
-  "been", "being", "have", "has", "had", "do", "does", "did", "to", "from",
-  "in", "out", "on", "off", "over", "under", "again", "further", "then", "once",
-  "here", "there", "when", "where", "why", "how", "all", "any", "both", "each",
-  "few", "more", "most", "other", "some", "such", "no", "nor", "not", "only",
-  "own", "same", "so", "than", "too", "very", "can", "will", "just", "should",
-  "now", "i", "me", "my", "we", "our", "you", "your", "it", "its", "they", "them",
-  "what", "different", "between", "explain", "describe", "list", "difference"
-}
-
-NUM_WORDS = {
-  "0": "zero", "1": "one", "2": "two", "3": "three", "4": "four", "5": "five",
-  "6": "six", "7": "seven", "8": "eight", "9": "nine", "10": "ten",
-  "zero": "0", "one": "1", "two": "2", "three": "3", "four": "4", "five": "5"
-}
-
-ACTION_VERBS = {
-  "is", "are", "was", "were", "uses", "used", "provides", "provided", "enables",
-  "allows", "connects", "guarantees", "combines", "divides", "runs", "executes",
-  "operates", "stores", "manages", "allocates", "transmits", "handles", "ensures",
-  "works", "maintains", "tracks", "holds", "returns", "implements", "requires"
-}
 
 CONNECTORS = {
   "because", "therefore", "however", "consequently", "specifically", "for instance",
@@ -85,53 +94,17 @@ CONNECTORS = {
 STAR_INDICATORS = {
   "situation": ["when i", "in my previous", "during my", "at my", "project where", "working on"],
   "task": ["my goal", "my task", "we needed to", "responsible for", "had to"],
-  "action": ["i implemented", "i created", "i designed", "i resolved", "i led", "i refactored", "i communicated"],
-  "result": ["as a result", "outcome", "improved", "increased", "reduced", "successfully", "learned"]
+  "action": ["i implemented", "i created", "i designed", "i resolved", "i led", "i refactored", "i communicated",
+             "i owned", "owned the", "took ownership", "i fixed", "i automated", "i escalated",
+             "rolled back", "root cause analysis", "my mistake"],
+  "result": ["as a result", "outcome", "improved", "increased", "reduced", "successfully", "learned",
+             "never happen again", "prevented", "since then"]
 }
 
 ABSURD_MARKERS = {
     "pizza", "unicorn", "fairy dust", "magic", "alien", "banana", "chocolate",
     "refrigerator", "clown", "superhero", "dragon", "spaceships", "wizard", "penguin"
 }
-
-def normalize_text(text: str) -> str:
-    text_clean = text.lower()
-    for num, word in [("3-way", "three way"), ("3 way", "three way"), ("2-way", "two way"), ("4-way", "four way")]:
-        text_clean = text_clean.replace(num, word)
-    return text_clean
-
-def tokenize(text: str) -> List[str]:
-    text_clean = re.sub(r"[^\w\s]", " ", normalize_text(text))
-    return [w for w in text_clean.split() if w and w not in STOPWORDS]
-
-def stem_match(w1: str, w2: str) -> bool:
-    w1, w2 = w1.lower(), w2.lower()
-    if w1 == w2: return True
-    if w1 in NUM_WORDS and NUM_WORDS[w1] == w2: return True
-    if w2 in NUM_WORDS and NUM_WORDS[w2] == w1: return True
-    if len(w1) >= 4 and len(w2) >= 4:
-        min_len = min(len(w1), len(w2), 4)
-        if w1[:min_len] == w2[:min_len]: return True
-    return False
-
-def calculate_cosine_similarity(vec1: dict, vec2: dict) -> float:
-    intersection = set(vec1.keys()) & set(vec2.keys())
-    numerator = sum([vec1[x] * vec2[x] for x in intersection])
-
-    sum1 = sum([vec1[x]**2 for x in vec1.keys()])
-    sum2 = sum([vec2[x]**2 for x in vec2.keys()])
-    denominator = math.sqrt(sum1) * math.sqrt(sum2)
-
-    if not denominator:
-        return 0.0
-
-    return float(numerator) / denominator
-
-def get_tf_vector(words: List[str]) -> dict:
-    counts = {}
-    for w in words:
-        counts[w] = counts.get(w, 0) + 1
-    return counts
 
 def calculate_structure_score(text: str) -> float:
     if not text or len(text.strip()) < 10:
@@ -207,12 +180,7 @@ def evaluate_with_local_nlp(
     reference_answer: Optional[str] = None
 ) -> NLPResult:
     transcript_clean = transcript.strip()
-    words = tokenize(transcript_clean)
-    all_raw_words = normalize_text(transcript_clean).split()
-    word_count = len(words)
-
-    # 1. Handle Silence / Empty response
-    if not transcript_clean or word_count < 3:
+    if not transcript_clean:
         return NLPResult(
             relevanceScore=0.0,
             correctnessScore=0.0,
@@ -224,148 +192,220 @@ def evaluate_with_local_nlp(
             feedback="No verbal response provided.",
             strengths=[],
             improvements=["Provide a clear spoken answer to the technical question prompt."],
-            evaluationEngine="local_nlp"
+            semanticSimilarity=0.0,
+            semanticConceptsMatched=[],
+            evaluationEngine="spacy_semantic_nlp"
         )
 
-    ans_lower = normalize_text(transcript_clean)
-    ans_set = set(words)
-    ans_norm_str = " ".join(words)
-    q_tokens = tokenize(question)
+    # 1. spaCy Linguistic & Syntactic Parsing
+    doc = spacy_nlp(transcript_clean)
+    words = [t for t in doc if not t.is_punct and not t.is_space]
+    word_count = len(words)
 
-    # 2. Absurdity / Sarcasm Detection
-    absurd_count = sum(1 for m in ABSURD_MARKERS if m in ans_lower)
-    is_absurd = absurd_count >= 1
+    if word_count < 3:
+        return NLPResult(
+            relevanceScore=0.0,
+            correctnessScore=0.0,
+            completenessScore=0.0,
+            communicationScore=0.0,
+            structureScore=0.0,
+            grammarScore=0.0,
+            overallScore=0.0,
+            feedback="No verbal response provided.",
+            strengths=[],
+            improvements=["Provide a clear spoken answer to the technical question prompt."],
+            semanticSimilarity=0.0,
+            semanticConceptsMatched=[],
+            evaluationEngine="spacy_semantic_nlp"
+        )
 
-    # 3. Action Verbs for Buzzword-Dump Detection
-    has_action_verbs = any(v in all_raw_words for v in ACTION_VERBS)
+    # 2. Substance & Structure Diagnostics
+    substance = analyze_answer_substance(doc, transcript_clean, question, keywords, q_type=q_type)
+    is_absurd = substance["is_absurd"]
+    is_filler = substance["is_mostly_filler"]
+    is_kw_stuffing = substance["is_keyword_stuffing"]
+    is_personal_evasion = substance.get("is_personal_evasion", False)
+    is_prompt_echo = substance["is_prompt_echo"]
+    has_subject_verb = substance["has_subject_verb"]
 
-    # 4. Prompt-Echoing Detection (repeating the question without answering)
-    novel_words = [w for w in words if not any(stem_match(w, qw) for qw in q_tokens)]
-    echo_ratio = 1.0 - (len(novel_words) / len(words)) if words else 1.0
-    is_mostly_echo = (echo_ratio > 0.65 and len(novel_words) < 4)
-
-    # 5. Dual-Pillar Concept & Keyword Coverage Matching
-    matched_concepts = []
-    missing_concepts = []
-
-    # A. Keyword Matching with Stemming & Subphrase
-    kw_hits = 0
-    if keywords:
-        for kw in keywords:
-            kw_clean = normalize_text(kw.strip())
-            kw_w = tokenize(kw_clean)
-            if not kw_w: continue
-            if (all(any(stem_match(w, aw) for aw in ans_set) for w in kw_w) or 
-                kw_clean in ans_norm_str or kw_clean in ans_lower):
-                kw_hits += 1
-                matched_concepts.append(kw)
+    # 3. spaCy Contiguous Keyword Matching
+    # Sanitize: some bank entries contain stopword keywords ("the", "and", "are")
+    # which lemma-match any transcript and leak into strengths feedback as
+    # "key domain principles". Strip them before matching.
+    _STOPWORD_KEYWORDS = {
+        "the", "a", "an", "and", "or", "of", "is", "are", "was", "were", "be",
+        "for", "in", "on", "with", "what", "how", "why", "does", "do", "did",
+        "it", "its", "to", "that", "this", "these", "those", "by", "at", "as",
+        "not", "no", "yes", "can", "will", "which", "when", "from", "about",
+    }
+    matched_keywords = []
+    missing_keywords = []
+    clean_keywords = [
+        k.strip() for k in (keywords or [])
+        if k and k.strip() and k.strip().lower() not in _STOPWORD_KEYWORDS
+    ]
+    if clean_keywords:
+        for kw in clean_keywords:
+            if phrase_matches_text(kw, transcript_clean, doc):
+                matched_keywords.append(kw)
             else:
-                missing_concepts.append(kw)
-        kw_ratio = kw_hits / len(keywords)
+                missing_keywords.append(kw)
+        # Semantic fallback for morphology/paraphrase misses (e.g. "owned" vs "ownership")
+        if missing_keywords and not (is_absurd or is_filler):
+            for kw in compute_semantic_keyword_matches(transcript_clean, missing_keywords):
+                matched_keywords.append(kw)
+                missing_keywords.remove(kw)
+        kw_ratio = len(matched_keywords) / len(clean_keywords)
     else:
         kw_ratio = 0.0
 
-    # B. Concept Sentence Matching
-    concept_hits = 0
-    if expected_concepts:
-        for c in expected_concepts:
-            c_w = tokenize(c)
-            if not c_w: continue
-            matched_w = sum(1 for w in c_w if any(stem_match(w, aw) for aw in ans_set))
-            if matched_w >= max(1, math.ceil(len(c_w) * 0.28)):
-                concept_hits += 1
-        concept_ratio = concept_hits / len(expected_concepts)
-    else:
-        concept_ratio = 0.0
+    # 4. Keyword Dumping Detection
+    is_kw_dump = is_keyword_dump(doc, matched_keywords) or is_kw_stuffing
 
-    # Base coverage calculation
-    if keywords and expected_concepts:
+    # 5. Semantic Concept-Level Alignment (Prerequisite: Passes Substance Checks)
+    semantic_concept_scores = {}
+    semantic_concepts_matched = []
+    if expected_concepts and not (is_absurd or is_filler or is_personal_evasion or is_kw_dump):
+        concept_alignments = compute_semantic_concept_alignment(transcript_clean, expected_concepts)
+        for c_text, raw_sim, credit in concept_alignments:
+            semantic_concept_scores[c_text] = raw_sim
+            if raw_sim >= 0.62 or credit >= 0.35:
+                semantic_concepts_matched.append(c_text)
+
+    # 6. spaCy Substantive Concept Coverage with Semantic Fallback
+    concept_ratio, matched_concepts, missing_concepts = compute_concept_coverage_spacy(
+        expected_concepts or [], doc, transcript_clean, semantic_concept_scores=semantic_concept_scores
+    )
+
+    # 7. Global Reference Answer Semantic Similarity
+    raw_semantic_sim = 0.0
+    semantic_credit = 0.0
+    if reference_answer and not (is_absurd or is_filler or is_personal_evasion or is_kw_dump):
+        raw_semantic_sim, semantic_credit = compute_semantic_similarity(transcript_clean, reference_answer)
+
+    # Anti-inflation guardrail: if zero concepts and zero/low keywords, zero out semantic credit
+    if concept_ratio == 0.0 and kw_ratio <= 0.20:
+        semantic_credit = 0.0
+    elif concept_ratio < 0.60:
+        semantic_credit = min(semantic_credit, concept_ratio + 0.15)
+
+    # 8. Combined Multi-Signal Coverage Calculation (No Artificial Floors!)
+    if keywords and expected_concepts and reference_answer:
+        if (concept_ratio >= 0.40 or (semantic_credit >= 0.45 and has_subject_verb)) and not (concept_ratio <= 0.50 and kw_ratio <= 0.50 and word_count < 14):
+            # Genuine technical explanation with high conceptual or semantic alignment
+            base_coverage = max(
+                (kw_ratio * 0.25) + (concept_ratio * 0.45) + (semantic_credit * 0.30),
+                (concept_ratio * 0.50) + (semantic_credit * 0.50)
+            )
+        elif concept_ratio <= 0.50 and kw_ratio <= 0.50:
+            # Partial answer capping
+            base_coverage = min(0.48, (kw_ratio * 0.30) + (concept_ratio * 0.45) + (semantic_credit * 0.25))
+        else:
+            base_coverage = (kw_ratio * 0.25) + (concept_ratio * 0.45) + (semantic_credit * 0.30)
+    elif keywords and expected_concepts:
         base_coverage = (kw_ratio * 0.40) + (concept_ratio * 0.60)
-        if kw_hits >= 1 and base_coverage < 0.30 and word_count >= 5:
-            base_coverage = 0.30
-    elif keywords:
-        base_coverage = kw_ratio
+    elif keywords and reference_answer:
+        base_coverage = (kw_ratio * 0.50) + (semantic_credit * 0.50)
+    elif expected_concepts and reference_answer:
+        base_coverage = (concept_ratio * 0.65) + (semantic_credit * 0.35)
     elif expected_concepts:
         base_coverage = concept_ratio
+    elif reference_answer:
+        base_coverage = semantic_credit
+    elif keywords:
+        base_coverage = kw_ratio
     else:
         base_coverage = 0.5
 
-    # Check acceptable alternative patterns
+    # Acceptable alternative patterns check
     if acceptable_patterns:
         for pat in acceptable_patterns:
-            pat_clean = normalize_text(pat.strip())
-            pat_words = tokenize(pat_clean)
-            if pat_clean in ans_lower or (pat_words and sum(1 for w in pat_words if any(stem_match(w, aw) for aw in ans_set)) >= max(1, len(pat_words) * 0.5)):
-                base_coverage = min(1.0, base_coverage + 0.10)
+            if phrase_matches_text(pat, transcript_clean, doc):
+                base_coverage = min(1.0, base_coverage + 0.15)
+                break
 
-    # 6. Inverted Factual Contradictions Detection
+    # STAR framework credit for behavioral answers: proportional to how many of the
+    # four STAR components (situation/task/action/result) the answer demonstrates.
+    if q_type in ("hr", "behavioral"):
+        star_hits = sum(
+            1 for indicators in STAR_INDICATORS.values()
+            if any(ind in transcript_clean.lower() for ind in indicators)
+        )
+        base_coverage = min(1.0, base_coverage + (star_hits / len(STAR_INDICATORS)) * 0.25)
+
+    # 9. Factual Contradiction Detection
+    # 9a. Hardcoded inverted-fact rules (zero tolerance)
     misconception_penalty = 0.0
+    ans_lower = transcript_clean.lower()
     if "tcp and udp" in question.lower():
-        if ("udp is connection oriented" in ans_lower or 
-            "udp uses a three way handshake" in ans_lower or
-            "udp is connection-oriented" in ans_lower or
-            "tcp is connectionless" in ans_lower or
-            "udp is reliable" in ans_lower or
-            "udp guarantees delivery" in ans_lower):
-            misconception_penalty += 60.0
+        if any(bad in ans_lower for bad in [
+            "udp is connection oriented", "udp uses a three way handshake",
+            "udp is connection-oriented", "tcp is connectionless",
+            "udp is reliable", "udp guarantees delivery"
+        ]):
+            misconception_penalty += 100.0
 
-    # 7. Buzzword-Only Detection
-    connector_matches = [c for c in CONNECTORS if c in ans_lower]
-    is_buzzword_dump = (kw_ratio >= 0.35 and not has_action_verbs and len(all_raw_words) < 22)
+    # 9b. Question-bank misconception detection (Phase 3)
+    # -40 per confirmed known misconception (cap 80): degrades correctness through
+    # the EXISTING gates below; cannot be bypassed by surrounding correct keywords
+    # because detection matches the incorrect claim itself, not keywords.
+    detected_misconceptions = detect_misconceptions(doc, transcript_clean, common_misconceptions or [])
+    if detected_misconceptions and not is_absurd:
+        misconception_penalty += min(80.0, 40.0 * len(detected_misconceptions))
 
-    # 8. Score Computations
-    if is_absurd:
-        relevance_score = min(5.0, round(base_coverage * 10.0, 1))
-        correctness_score = 0.0
-    elif is_mostly_echo:
-        relevance_score = min(15.0, round(base_coverage * 20.0, 1))
-        correctness_score = min(10.0, round(base_coverage * 15.0, 1))
-    elif is_buzzword_dump:
-        relevance_score = min(30.0, round(base_coverage * 40.0, 1))
-        correctness_score = min(20.0, round(base_coverage * 25.0, 1))
-    elif kw_hits == 0 and concept_hits == 0:
+    # 10. Strict Score Computations
+    if is_absurd or is_filler or misconception_penalty >= 80.0:
         relevance_score = 0.0
         correctness_score = 0.0
-    elif kw_hits <= 1 and concept_hits == 0 and word_count >= 15:
-        relevance_score = 10.0
-        correctness_score = 5.0
-    elif kw_hits >= 1 and concept_hits == 0 and word_count < 15:
-        relevance_score = 35.0
-        correctness_score = 30.0
+    elif is_personal_evasion:
+        relevance_score = min(8.0, round(base_coverage * 15.0, 1))
+        correctness_score = 0.0
+    elif is_prompt_echo:
+        relevance_score = min(15.0, round(base_coverage * 20.0, 1))
+        correctness_score = min(10.0, round(base_coverage * 15.0, 1))
+    elif is_kw_dump:
+        relevance_score = min(25.0, round(base_coverage * 30.0, 1))
+        correctness_score = min(15.0, round(base_coverage * 20.0, 1))
+    elif kw_ratio == 0 and concept_ratio == 0 and semantic_credit == 0:
+        relevance_score = 0.0
+        correctness_score = 0.0
+    elif base_coverage < 0.15 and not has_subject_verb:
+        relevance_score = min(10.0, round(base_coverage * 30.0, 1))
+        correctness_score = 0.0
+    elif concept_ratio <= 0.50 and kw_ratio <= 0.50:
+        # Strict capping for partial answers
+        relevance_score = min(60.0, max(0.0, round((base_coverage * 85.0) + (13.0 if base_coverage > 0.2 else 0.0), 1)))
+        correctness_score = min(52.0, max(0.0, round((base_coverage * 100.0) - misconception_penalty, 1)))
     else:
-        relevance_score = min(98.0, max(25.0, round((base_coverage * 85.0) + 15.0, 1)))
+        relevance_score = min(98.0, max(0.0, round((base_coverage * 85.0) + (13.0 if base_coverage > 0.2 else 0.0), 1)))
         correctness_score = min(98.0, max(0.0, round((base_coverage * 100.0) - misconception_penalty, 1)))
 
-    # 9. Completeness Score
-    if is_absurd or is_mostly_echo or is_buzzword_dump or correctness_score == 0.0:
+    # 11. Completeness Score
+    if is_absurd or is_filler or is_personal_evasion or is_prompt_echo or is_kw_dump or correctness_score == 0.0:
         completeness_score = 0.0
-    elif correctness_score >= 70.0 and word_count >= 25:
+    elif concept_ratio <= 0.50 or kw_ratio <= 0.50 or word_count < 14:
+        completeness_score = min(50.0, round(correctness_score * 0.9, 1))
+    elif correctness_score >= 70.0 and word_count >= 18:
         completeness_score = 95.0
-    elif correctness_score >= 50.0 and word_count >= 15:
-        completeness_score = 75.0
-    elif correctness_score >= 25.0 and word_count >= 6:
-        completeness_score = 45.0
+    elif correctness_score >= 50.0 and word_count >= 12:
+        completeness_score = 80.0
+    elif correctness_score >= 20.0 and word_count >= 6:
+        completeness_score = 50.0
     else:
-        completeness_score = min(25.0, round(correctness_score * 0.5, 1))
+        completeness_score = min(30.0, round(correctness_score * 0.5, 1))
 
-    # 10. Communication & Structure Score
-    star_score = 0
-    for category, indicators in STAR_INDICATORS.items():
-        if any(ind in ans_lower for ind in indicators):
-            star_score += 1
-
-    structure_bonus = min(20.0, len(connector_matches) * 5.0 + star_score * 5.0)
+    # 12. Communication & Structural Analysis
     structure_score = calculate_structure_score(transcript_clean)
     grammar_score = calculate_grammar_score(transcript_clean)
 
-    if is_absurd or is_mostly_echo or is_buzzword_dump or correctness_score == 0.0:
+    if is_absurd or is_filler or is_personal_evasion or is_prompt_echo or is_kw_dump or correctness_score == 0.0:
         communication_score = 5.0
-    elif correctness_score < 35.0:
-        communication_score = min(40.0, round((base_coverage * 30.0) + 20.0, 1))
+    elif correctness_score < 20.0:
+        communication_score = min(35.0, round((base_coverage * 30.0) + 15.0, 1))
     else:
-        communication_score = min(96.0, round((base_coverage * 45.0) + structure_bonus + 35.0, 1))
+        communication_score = min(96.0, round((base_coverage * 40.0) + (45.0 if has_subject_verb else 25.0), 1))
 
-    # 11. Strict Dynamic Weighted Composite Score
+    # 13. Strict Dynamic Weighted Composite Score
     rubric = scoring_rubric or {}
     r_wt = rubric.get("relevanceWeight", 0.25)
     c_wt = rubric.get("conceptWeight", 0.40)
@@ -379,63 +419,71 @@ def evaluate_with_local_nlp(
         (communication_score * s_wt)
     )
 
-    # ── STRICT CORRECTNESS FLOOR & GATING ──────────────────────────────────────────
-    if is_absurd:
-        overall_score = min(5.0, round(raw_overall, 1))
-    elif is_mostly_echo:
+    # 14. Strict Correctness Gating
+    if is_absurd or is_filler or is_personal_evasion or correctness_score == 0.0:
+        overall_score = 0.0
+    elif is_prompt_echo:
         overall_score = min(12.0, round(raw_overall, 1))
-    elif is_buzzword_dump:
-        overall_score = min(20.0, round(raw_overall, 1))
-    elif correctness_score < 10.0:
-        overall_score = min(8.0, round(correctness_score, 1))
-    elif correctness_score < 25.0:
-        overall_score = min(20.0, round(raw_overall * 0.50, 1))
-    elif correctness_score < 40.0:
-        overall_score = min(38.0, round(raw_overall, 1))
+    elif is_kw_dump:
+        overall_score = min(15.0, round(raw_overall, 1))
+    elif correctness_score < 15.0:
+        overall_score = min(15.0, round(raw_overall * 0.50, 1))
+    elif correctness_score < 30.0:
+        overall_score = min(35.0, round(raw_overall, 1))
+    elif correctness_score < 50.0:
+        overall_score = min(50.0, round(raw_overall, 1))
     else:
         overall_score = round(raw_overall, 1)
 
     overall_score = min(98.0, max(0.0, overall_score))
 
-    # 12. Dynamic Strengths & Actionable Feedback
+    # 15. Dynamic Strengths & Actionable Feedback
     strengths = []
     improvements = []
 
-    if matched_concepts:
-        clean_strengths = [c for c in matched_concepts if c.lower() not in STOPWORDS]
-        if clean_strengths:
-            strengths.append(f"Accurately addressed key domain principles: {', '.join(clean_strengths[:3])}.")
-    if len(connector_matches) > 0 and not is_absurd:
-        strengths.append("Used logical connective transitions to structure the technical explanation.")
+    if matched_keywords and not is_kw_dump and not is_absurd and not is_personal_evasion:
+        strengths.append(f"Accurately addressed key domain principles: {', '.join(matched_keywords[:3])}.")
+    if kw_ratio < 0.35 and (semantic_credit >= 0.40 or len(semantic_concepts_matched) >= 1) and correctness_score >= 50.0:
+        strengths.append("Successfully articulated core technical mechanisms using independent conceptual phrasing.")
+    if has_subject_verb and correctness_score >= 50 and not is_kw_dump:
+        strengths.append("Structured technical assertions with clear cause-and-effect relationships.")
     if correctness_score >= 80.0:
-        strengths.append("Demonstrated clear, authoritative technical mastery of the core concept.")
+        strengths.append("Demonstrated authoritative mastery of the core concept.")
     if not strengths:
-        if is_absurd or is_mostly_echo:
+        if is_absurd or is_prompt_echo or is_filler or is_personal_evasion:
             strengths.append("Spoken input was captured.")
         else:
             strengths.append("Attempted the technical prompt directly.")
 
     if is_absurd:
         improvements.append("Avoid non-technical, irrelevant, or humorous content in technical interview responses.")
-    if is_mostly_echo:
-        improvements.append("Avoid simply repeating the question prompt; explain the underlying technical mechanism.")
-    if is_buzzword_dump:
-        improvements.append("Connect technical terminology into coherent sentences explaining 'how' and 'why' rather than listing keywords.")
-    if missing_concepts and not is_absurd:
-        clean_missing = [c for c in missing_concepts if c.lower() not in STOPWORDS]
-        if clean_missing:
-            improvements.append(f"Detail essential technical pillars: {', '.join(clean_missing[:3])}.")
-    if word_count < 25 and not is_absurd and not is_mostly_echo:
-        improvements.append("Elaborate further with architectural details, complexity bounds, or code examples.")
-
-    if is_absurd or is_mostly_echo:
-        feedback = "Response does not provide an accurate or substantive answer to the technical question prompt."
+        feedback = "Response contains non-technical or absurd content."
+    elif is_filler:
+        improvements.append("Provide concrete technical mechanisms rather than vague high-level generalities.")
+        feedback = "Response is overly vague and lacks concrete technical substance."
+    elif is_personal_evasion:
+        improvements.append("Frame your answer as an objective technical explanation rather than personal monologue.")
+        feedback = "Response does not provide an objective technical explanation."
+    elif is_kw_dump:
+        improvements.append("Connect technical terminology into coherent sentences explaining 'how' and 'why'.")
+        feedback = "Avoid simply listing technical keywords without explanatory syntax."
+    elif is_prompt_echo:
+        improvements.append("Avoid repeating the question prompt; explain the underlying technical mechanism.")
+        feedback = "Response repeats the question prompt without providing an explanatory answer."
+    elif missing_keywords and not is_absurd:
+        improvements.append(f"Detail essential technical pillars: {', '.join(missing_keywords[:3])}.")
+        if correctness_score >= 80:
+            feedback = f"Excellent technical explanation. Core concepts ({', '.join(matched_keywords[:2]) if matched_keywords else 'fundamental principles'}) were accurately articulated with sound reasoning."
+        elif correctness_score >= 50:
+            feedback = f"Partially correct answer. Covered key ideas but would benefit from greater detail regarding {missing_keywords[0]}."
+        else:
+            feedback = f"Incomplete or inaccurate explanation. Review foundational concepts regarding {question}."
     elif correctness_score >= 80:
-        feedback = f"Excellent technical explanation. Core concepts ({', '.join(matched_concepts[:2]) if matched_concepts else 'fundamental principles'}) were accurately articulated with sound reasoning."
+        feedback = f"Excellent technical explanation. Core concepts ({', '.join(matched_keywords[:2]) if matched_keywords else 'fundamental principles'}) were accurately articulated with sound reasoning."
     elif correctness_score >= 50:
-        feedback = f"Partially correct answer. Covered basic ideas but would benefit from greater precision regarding {missing_concepts[0] if missing_concepts else 'underlying mechanisms'}."
+        feedback = "Partially correct answer. Covered basic principles but lacked full depth on technical trade-offs."
     else:
-        feedback = f"Incomplete or inaccurate explanation. Review foundational concepts regarding {question}."
+        feedback = f"Incomplete explanation. Review foundational concepts regarding {question}."
 
     return NLPResult(
         relevanceScore=relevance_score,
@@ -448,7 +496,10 @@ def evaluate_with_local_nlp(
         feedback=feedback,
         strengths=strengths,
         improvements=improvements,
-        evaluationEngine="local_nlp"
+        semanticSimilarity=raw_semantic_sim,
+        semanticConceptsMatched=semantic_concepts_matched,
+        misconceptionsDetected=detected_misconceptions,
+        evaluationEngine="spacy_semantic_nlp"
     )
 
 
@@ -456,6 +507,10 @@ def evaluate_with_local_nlp(
 async def analyze_nlp(body: NLPRequest):
     input_transcript = body.transcript or body.text or ""
     input_question = body.question or "Interview Practice Question"
+
+    # Wait for background semantic-model warmup (bounded); falls back to the
+    # lazy-load path inside the evaluator if warmup is still unfinished.
+    _semantic_model_ready.wait(timeout=30)
 
     local_result = evaluate_with_local_nlp(
         question=input_question,
@@ -486,11 +541,40 @@ async def health():
 
 
 from resume_parser import extract_text_from_bytes, synthesize_questions_from_resume
+from llm_router import (
+    generate_project_questions_llm,
+    generate_project_followup_llm,
+    evaluate_project_answer_llm,
+    generate_technical_questions_llm,
+    generate_hr_questions_llm,
+)
 
 class ResumeQuestionRequest(BaseModel):
     resumeText: str
     role: Optional[str] = "Software Engineer"
     count: Optional[int] = 5
+
+class ProjectQuestionsRequest(BaseModel):
+    projects: Optional[List[Dict[str, Any]]] = []
+    role: Optional[str] = "Software Engineer"
+    count: Optional[int] = 2
+    sessionId: Optional[str] = None
+    sessionIndex: Optional[int] = 0
+    previousQuestions: Optional[List[str]] = None
+    resumeText: Optional[str] = None
+
+class ProjectFollowUpRequest(BaseModel):
+    projectContext: Dict[str, Any]
+    question: str
+    answer: str
+    previousFollowUps: Optional[List[Dict[str, str]]] = None
+    turnCount: Optional[int] = 1
+
+class ProjectEvaluateRequest(BaseModel):
+    projectContext: Dict[str, Any]
+    question: str
+    answer: str
+    isFollowUp: Optional[bool] = False
 
 @app.post("/extract-resume-text")
 async def extract_resume(file: UploadFile = File(...)):
@@ -498,7 +582,7 @@ async def extract_resume(file: UploadFile = File(...)):
         contents = await file.read()
         filename = file.filename or "resume.pdf"
         text = extract_text_from_bytes(contents, filename)
-        return {"success": True, "text": text}
+        return {"success": True, "extractedText": text, "text": text}
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Failed to extract text from resume: {str(e)}")
 
@@ -506,6 +590,124 @@ async def extract_resume(file: UploadFile = File(...)):
 async def generate_resume_qs(body: ResumeQuestionRequest):
     try:
         qs = synthesize_questions_from_resume(body.resumeText, role=body.role or "Software Engineer", count=body.count or 5)
-        return {"success": True, "questions": qs}
+        return {
+            "success": True,
+            "data": {
+                "questions": qs.get("questions", []),
+                "domainTags": qs.get("domainTags", []),
+                "skills": qs.get("skills", []),
+                "projects": qs.get("projects", []),
+                "rawText": body.resumeText,
+                "summary": qs.get("summary", "")
+            },
+            "questions": qs.get("questions", [])
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to generate questions: {str(e)}")
+
+@app.post("/extract-and-generate-resume-questions")
+async def extract_and_generate_resume_questions(
+    file: UploadFile = File(...),
+    role: Optional[str] = Form("Software Engineer"),
+    count: Optional[int] = Form(5)
+):
+    try:
+        contents = await file.read()
+        filename = file.filename or "resume.docx"
+        text = extract_text_from_bytes(contents, filename)
+        synth = synthesize_questions_from_resume(text, role=role or "Software Engineer", count=count or 5)
+        return {
+            "success": True,
+            "data": {
+                "extractedText": text,
+                "text": text,
+                "skills": synth.get("skills", []),
+                "projects": synth.get("projects", []),
+                "domainTags": synth.get("domainTags", []),
+                "questions": synth.get("questions", []),
+                "summary": synth.get("summary", "")
+            },
+            "questions": synth.get("questions", [])
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to process resume: {str(e)}")
+
+# ── LLM Router Endpoints for Project Defense & Dynamic Follow-ups ──────────────
+
+@app.post("/generate-project-questions")
+async def generate_project_questions_endpoint(body: ProjectQuestionsRequest):
+    try:
+        questions = await generate_project_questions_llm(
+            projects=body.projects or [],
+            role=body.role or "Software Engineer",
+            count=body.count or 2,
+            session_id=body.sessionId,
+            session_index=body.sessionIndex or 0,
+            previous_questions=body.previousQuestions or [],
+            resume_text=body.resumeText
+        )
+        return {"success": True, "data": {"questions": questions}, "questions": questions}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to generate project questions: {str(e)}")
+
+@app.post("/generate-project-followup")
+async def generate_project_followup_endpoint(body: ProjectFollowUpRequest):
+    try:
+        followup = await generate_project_followup_llm(
+            project_context=body.projectContext,
+            original_question=body.question,
+            candidate_answer=body.answer,
+            previous_followups=body.previousFollowUps,
+            turn_count=body.turnCount or 1
+        )
+        return {"success": True, "data": followup}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to generate project follow-up: {str(e)}")
+
+@app.post("/evaluate-project-answer")
+async def evaluate_project_answer_endpoint(body: ProjectEvaluateRequest):
+    try:
+        eval_res = await evaluate_project_answer_llm(
+            project_context=body.projectContext,
+            question=body.question,
+            answer=body.answer,
+            is_followup=body.isFollowUp or False
+        )
+        return {"success": True, "data": eval_res}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to evaluate project answer: {str(e)}")
+
+
+class TechnicalQuestionsRequest(BaseModel):
+    role: Optional[str] = "Software Engineer"
+    topics: Optional[List[str]] = None
+    count: Optional[int] = 4
+
+@app.post("/generate-technical-questions")
+async def generate_technical_questions_endpoint(body: TechnicalQuestionsRequest):
+    try:
+        questions = await generate_technical_questions_llm(
+            role=body.role or "Software Engineer",
+            topics=body.topics or [],
+            count=body.count or 4
+        )
+        return {"success": True, "data": {"questions": questions}, "questions": questions}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to generate technical questions: {str(e)}")
+
+
+class HRQuestionsRequest(BaseModel):
+    role: Optional[str] = "Software Engineer"
+    count: Optional[int] = 4
+
+@app.post("/generate-hr-questions")
+async def generate_hr_questions_endpoint(body: HRQuestionsRequest):
+    try:
+        questions = await generate_hr_questions_llm(
+            role=body.role or "Software Engineer",
+            count=body.count or 4
+        )
+        return {"success": True, "data": {"questions": questions}, "questions": questions}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to generate HR questions: {str(e)}")
+

@@ -3,8 +3,10 @@ import { useEffect, useRef, useState, useCallback } from "react";
 /**
  * Ultra-Responsive Real-Time Voice Activity Detector (VAD)
  * - Layered Hybrid Architecture:
- *   1. Primary Interruption: STT-Confirmed Word Detection (100% immune to dog barks, car horns, domestic noise).
- *   2. Secondary Interruption: Calibrated Acoustic & Spectral Formant Safety Net (320ms sustained human voice).
+ *   1. Primary Interruption: STT-Confirmed Word Detection (100% immune to domestic noise).
+ *   2. Secondary Interruption: Calibrated Harmonic Pitch & Multi-Band Formant Safety Net
+ *      (Autocorrelation F0 in 80-320Hz + Vocal Tract Formant Resonance).
+ *      -> Suppresses laptop fan noise, car horns, keyboard clicks, and domestic transients.
  *   3. Transcript-Locked Auto-Completion: Requires real spoken words before silence progression activates.
  */
 
@@ -12,13 +14,116 @@ const trace = (event, data = {}) => {
   console.log(`[VAD-TRACE ${performance.now().toFixed(0)}] ${event}`, data);
 };
 
+/**
+ * Fast Autocorrelation Pitch & Voicing Detector
+ * Detects fundamental frequency (F0) periodicity in human vocal range (80 Hz - 320 Hz)
+ * Rejects white/pink fan noise (periodicity < 0.25).
+ */
+function detectHumanPitchPeriodicity(timeData, sampleRate) {
+  const minLag = Math.max(1, Math.floor(sampleRate / 340)); // ~340 Hz upper bound
+  const maxLag = Math.min(timeData.length - 1, Math.floor(sampleRate / 75));  // ~75 Hz lower bound
+  
+  const N = Math.min(timeData.length, 512);
+  let maxCorr = 0;
+  let energy = 0;
+  
+  for (let i = 0; i < N; i++) {
+    energy += timeData[i] * timeData[i];
+  }
+  if (energy < 0.00005) return { isVoiced: false, periodicity: 0 };
+  
+  for (let lag = minLag; lag <= maxLag; lag += 2) {
+    let sum = 0;
+    for (let i = 0; i < N - lag; i++) {
+      sum += timeData[i] * timeData[i + lag];
+    }
+    const normCorr = sum / energy;
+    if (normCorr > maxCorr) {
+      maxCorr = normCorr;
+    }
+  }
+  
+  return { isVoiced: maxCorr >= 0.28, periodicity: maxCorr };
+}
+
+/**
+ * Formant & Spectral Multi-Band Energy Validator
+ * Rejects single-frequency tones (car horns), high-frequency clicks (typing), and broadband noise (fans)
+ */
+function evaluateSpeechFormants(freqData, sampleRate) {
+  const binCount = freqData.length;
+  const binWidth = (sampleRate / 2) / binCount;
+  
+  let totalEnergy = 0;
+  let maxBinVal = 0;
+  let f1Energy = 0; // 300 - 1000 Hz
+  let f2Energy = 0; // 1000 - 3000 Hz
+  let highEnergy = 0; // > 4000 Hz
+  let weightedFreqSum = 0;
+  
+  for (let i = 0; i < binCount; i++) {
+    const val = freqData[i] / 255;
+    const power = val * val;
+    totalEnergy += power;
+    if (val > maxBinVal) maxBinVal = val;
+    
+    const freq = i * binWidth;
+    weightedFreqSum += freq * power;
+    
+    if (freq >= 280 && freq <= 1100) {
+      f1Energy += power;
+    } else if (freq > 1100 && freq <= 3200) {
+      f2Energy += power;
+    } else if (freq > 3800) {
+      highEnergy += power;
+    }
+  }
+  
+  if (totalEnergy < 0.0001) {
+    return { isHumanSpeech: false, reason: "silent" };
+  }
+  
+  const centroid = weightedFreqSum / totalEnergy;
+  const peakiness = maxBinVal / Math.sqrt(totalEnergy + 0.0001);
+  const f1Ratio = f1Energy / totalEnergy;
+  const f2Ratio = f2Energy / totalEnergy;
+  const highRatio = highEnergy / totalEnergy;
+  
+  // Rejection 1: Single-Tone / Car Horn (>80% of energy in narrow band or extreme peakiness)
+  const isSingleTone = peakiness > 5.5 || (f1Ratio > 0.88 || f2Ratio > 0.88);
+  if (isSingleTone) {
+    return { isHumanSpeech: false, reason: "single_tone_horn", peakiness, centroid };
+  }
+  
+  // Rejection 2: Keyboard click / Mouse clack (Dominant energy above 3.8kHz)
+  const isHighClick = highRatio > 0.45 || centroid > 3800;
+  if (isHighClick) {
+    return { isHumanSpeech: false, reason: "high_freq_click", highRatio, centroid };
+  }
+  
+  // Requirement: Vocal tract resonance in F1/F2 speech bands
+  const hasFormants = (f1Ratio + f2Ratio) >= 0.25;
+  if (!hasFormants) {
+    return { isHumanSpeech: false, reason: "no_formants", f1Ratio, f2Ratio };
+  }
+  
+  return {
+    isHumanSpeech: true,
+    centroid,
+    peakiness,
+    f1Ratio,
+    f2Ratio,
+    highRatio
+  };
+}
+
 export function useVoiceActivityDetector({
   stream,
   enabled = true,
   bargeInEnabled = false,
   speechThreshold = 0.014,       // Calibrated for natural human voice (0.014 - 0.035 RMS)
-  bargeInThreshold = 0.026,      // Calibrated acoustic fallback threshold
-  bargeInSustainMs = 320,        // 320ms sustained vocal energy required for pure acoustic fallback (rejects barks/honks)
+  bargeInThreshold = 0.024,      // Calibrated acoustic fallback threshold
+  bargeInSustainMs = 280,        // 280ms sustained vocal harmonic energy required for acoustic fallback
   silenceThresholdMs = 1800,     // 1.8s silence after answering triggers automatic progression
   thinkingGracePeriodMs = 2800,  // 2.8s grace period for short verbal answers
   minAnswerDurationMs = 1800,    // Minimum duration before silence auto-advances
@@ -88,7 +193,7 @@ export function useVoiceActivityDetector({
   const bargeInConsecutiveFramesRef = useRef(0);
   const hasFiredBargeInRef = useRef(false);
 
-  // Spectral Analysis Refs
+  // Spectral & Harmonic History Refs
   const spectralHistoryRef = useRef([]);
 
   // VAD Answer Timing & State Refs
@@ -101,7 +206,6 @@ export function useVoiceActivityDetector({
   const lastTranscriptChangeTimeRef = useRef(0);
   const hasFiredCompletionRef = useRef(false);
   const lastRmsUiUpdateRef = useRef(0);
-  const lastDiagLogTimeRef = useRef(0);
 
   // Layer 1: Feed live speech recognition transcript updates (STT-Gated Barge-In)
   const notifyTranscriptUpdate = useCallback((newTranscript) => {
@@ -138,60 +242,43 @@ export function useVoiceActivityDetector({
   // Explicit session start / reset
   const startSession = useCallback(() => {
     const now = Date.now();
+    const perfNow = performance.now();
     recordingStartTimeRef.current = now;
     lastSpeechTimeRef.current = now;
     totalSpokenDurationMsRef.current = 0;
-    lastTranscriptChangeTimeRef.current = now;
-    lastTranscriptTextRef.current = "";
     hasSpokenRef.current = false;
     isSpeakingRef.current = false;
-    bargeInOnsetRef.current = 0;
-    bargeInConsecutiveFramesRef.current = 0;
-    hasFiredBargeInRef.current = false;
     hasFiredCompletionRef.current = false;
-    setIsSpeaking(false);
-    trace("startSession", { now, hasSpoken: false, hasFiredCompletion: false });
-  }, []);
-
-  // Reset only barge-in firing so a repeated question can be interrupted
-  const resetBargeInEngine = useCallback(() => {
     hasFiredBargeInRef.current = false;
     bargeInOnsetRef.current = 0;
     bargeInConsecutiveFramesRef.current = 0;
-    trace("resetBargeInEngine");
+    spectralHistoryRef.current = [];
+    setIsSpeaking(false);
+    trace("session_started", { timestamp: perfNow });
+
+    if (audioContextRef.current && audioContextRef.current.state === "suspended") {
+      audioContextRef.current.resume().catch(() => {});
+    }
   }, []);
 
-  // Reset timers when entering listening mode without tearing down AudioContext
-  const prevEnabledRef = useRef(enabled);
-  useEffect(() => {
-    if (!prevEnabledRef.current && enabled) {
-      startSession();
-      if (audioContextRef.current && audioContextRef.current.state === "suspended") {
-        audioContextRef.current.resume().catch(() => {});
-      }
-    }
-    prevEnabledRef.current = enabled;
-  }, [enabled, startSession]);
+  // Explicit barge-in reset when starting a new question TTS read-out
+  const resetBargeInEngine = useCallback((newTtsStartTime) => {
+    const perfNow = performance.now();
+    hasFiredBargeInRef.current = false;
+    bargeInOnsetRef.current = 0;
+    bargeInConsecutiveFramesRef.current = 0;
+    ttsStartTimeRef.current = newTtsStartTime || Date.now();
+    spectralHistoryRef.current = [];
+    trace("bargein_engine_reset", { ttsStartTime: ttsStartTimeRef.current, timestamp: perfNow });
 
-  // Reset barge-in flags when entering barge-in mode
-  const prevBargeInRef = useRef(bargeInEnabled);
-  useEffect(() => {
-    if (!prevBargeInRef.current && bargeInEnabled) {
-      hasFiredBargeInRef.current = false;
-      bargeInOnsetRef.current = 0;
-      bargeInConsecutiveFramesRef.current = 0;
-      if (audioContextRef.current && audioContextRef.current.state === "suspended") {
-        audioContextRef.current.resume().catch(() => {});
-      }
+    if (audioContextRef.current && audioContextRef.current.state === "suspended") {
+      audioContextRef.current.resume().catch(() => {});
     }
-    prevBargeInRef.current = bargeInEnabled;
-  }, [bargeInEnabled]);
+  }, []);
 
   // Main AudioContext & Analyser Loop
   useEffect(() => {
-    if (!stream) {
-      return;
-    }
+    if (!stream) return;
 
     const audioTracks = stream.getAudioTracks();
     if (audioTracks.length === 0 || audioTracks[0].readyState !== "live") {
@@ -217,13 +304,28 @@ export function useVoiceActivityDetector({
       analyser.smoothingTimeConstant = 0.2;
       analyserRef.current = analyser;
 
+      // Vocal Frequency Bandpass Filter Chain (130 Hz HPF + 3600 Hz LPF)
+      // Strips out laptop fan rumble, desk vibrations, and high-frequency air hiss
+      const hpFilter = audioCtx.createBiquadFilter();
+      hpFilter.type = "highpass";
+      hpFilter.frequency.value = 130;
+      hpFilter.Q.value = 0.7;
+
+      const lpFilter = audioCtx.createBiquadFilter();
+      lpFilter.type = "lowpass";
+      lpFilter.frequency.value = 3600;
+      lpFilter.Q.value = 0.7;
+
       const source = audioCtx.createMediaStreamSource(stream);
-      source.connect(analyser);
+      source.connect(hpFilter);
+      hpFilter.connect(lpFilter);
+      lpFilter.connect(analyser);
       sourceRef.current = source;
 
       startSession();
 
-      const dataArray = new Uint8Array(analyser.frequencyBinCount);
+      const byteTimeData = new Uint8Array(analyser.fftSize);
+      const floatTimeData = new Float32Array(analyser.fftSize);
       const freqDataArray = new Uint8Array(analyser.frequencyBinCount);
 
       const checkAudioLevel = () => {
@@ -234,63 +336,25 @@ export function useVoiceActivityDetector({
           audioContextRef.current.resume().catch(() => {});
         }
 
-        analyserRef.current.getByteTimeDomainData(dataArray);
+        analyserRef.current.getByteTimeDomainData(byteTimeData);
+        analyserRef.current.getFloatTimeDomainData(floatTimeData);
         analyserRef.current.getByteFrequencyData(freqDataArray);
 
         // Compute RMS amplitude
         let sumSquares = 0;
-        for (let i = 0; i < dataArray.length; i++) {
-          const norm = (dataArray[i] - 128) / 128;
+        for (let i = 0; i < byteTimeData.length; i++) {
+          const norm = (byteTimeData[i] - 128) / 128;
           sumSquares += norm * norm;
         }
-        const rms = Math.sqrt(sumSquares / dataArray.length);
+        const rms = Math.sqrt(sumSquares / byteTimeData.length);
 
-        // Spectral Analysis
         const sampleRate = audioContextRef.current?.sampleRate || 44100;
-        const nyquist = sampleRate / 2;
-        const binHz = nyquist / freqDataArray.length;
         
-        const speechMinBin = Math.max(1, Math.floor(300 / binHz));
-        const speechMaxBin = Math.min(freqDataArray.length - 1, Math.floor(3400 / binHz));
+        // 1. Fast Autocorrelation Pitch Periodicity (F0 in 80Hz - 320Hz human range)
+        const pitchInfo = detectHumanPitchPeriodicity(floatTimeData, sampleRate);
         
-        let speechBandEnergy = 0;
-        let peakValue = 0;
-        
-        for (let i = speechMinBin; i <= speechMaxBin; i++) {
-          const val = freqDataArray[i];
-          speechBandEnergy += val;
-          if (val > peakValue) {
-            peakValue = val;
-          }
-        }
-        
-        let logSum = 0;
-        let binCount = 0;
-        for (let i = speechMinBin; i <= speechMaxBin; i++) {
-          if (freqDataArray[i] > 0) {
-            logSum += Math.log(freqDataArray[i] + 1);
-            binCount++;
-          }
-        }
-        const geometricMean = binCount > 0 ? Math.exp(logSum / binCount) : 0;
-        const arithmeticMean = binCount > 0 ? speechBandEnergy / binCount : 1;
-        const spectralFlatness = arithmeticMean > 0 ? geometricMean / arithmeticMean : 0;
-
-        let weightedSum = 0;
-        for (let i = speechMinBin; i <= speechMaxBin; i++) {
-          weightedSum += i * binHz * freqDataArray[i];
-        }
-        const spectralCentroid = speechBandEnergy > 0 ? weightedSum / speechBandEnergy : 0;
-
-        spectralHistoryRef.current.push({
-          flatness: spectralFlatness,
-          centroid: spectralCentroid,
-          peakValue: peakValue / 255.0,
-          energy: speechBandEnergy,
-        });
-        if (spectralHistoryRef.current.length > 8) {
-          spectralHistoryRef.current.shift();
-        }
+        // 2. Multi-Band Formant Energy Validation (F1/F2 speech resonance)
+        const formantInfo = evaluateSpeechFormants(freqDataArray, sampleRate);
 
         const now = Date.now();
         const perfNow = performance.now();
@@ -301,55 +365,48 @@ export function useVoiceActivityDetector({
           setCurrentRms(rms);
         }
 
-        // Adaptive Noise Floor Tracking
-        if (rms < speechThresholdRef.current * 1.2) {
-          noiseFloorRef.current = Math.max(0.003, Math.min(0.035, noiseFloorRef.current * 0.990 + rms * 0.010));
+        // Adaptive Noise Floor Tracking (Track stationary background fan noise/ambient hum)
+        if (!pitchInfo.isVoiced && !formantInfo.isHumanSpeech) {
+          noiseFloorRef.current = Math.max(0.004, Math.min(0.040, noiseFloorRef.current * 0.992 + rms * 0.008));
         }
 
         const effectiveBargeInThreshold = Math.max(
           bargeInThresholdRef.current,
-          noiseFloorRef.current * 1.8
+          noiseFloorRef.current * 2.2
         );
         const effectiveSpeechThreshold = Math.max(
           speechThresholdRef.current,
-          noiseFloorRef.current * 1.3
+          noiseFloorRef.current * 2.0
         );
 
-        // Layer 2: Secondary Acoustic & Spectral Fallback (Sustained >= 320ms human voice)
+        // Layer 2: Secondary Harmonic & Formant Safety Net (Sustained >= 280ms human vocalization)
         if (bargeInEnabledRef.current && !hasFiredBargeInRef.current) {
           const ttsElapsed = now - ttsStartTimeRef.current;
 
+          // Only trigger if AI has been speaking for at least 250ms
           if (ttsElapsed > 250) {
-            if (rms >= effectiveBargeInThreshold) {
+            // Require RMS above floating threshold AND human harmonic pitch AND vocal formants
+            const isSpeechAcoustic = rms >= effectiveBargeInThreshold && pitchInfo.isVoiced && formantInfo.isHumanSpeech;
+
+            if (isSpeechAcoustic) {
               bargeInConsecutiveFramesRef.current += 1;
               if (bargeInOnsetRef.current === 0) {
                 bargeInOnsetRef.current = perfNow;
               } else {
                 const sustainedMs = perfNow - bargeInOnsetRef.current;
-                // Require 320ms sustained vocal energy + formant validation
-                if (sustainedMs >= bargeInSustainMsRef.current || bargeInConsecutiveFramesRef.current >= 10) {
-                  const recentHistory = spectralHistoryRef.current.slice(-4);
-                  const avgFlatness = recentHistory.reduce((s, h) => s + h.flatness, 0) / recentHistory.length;
-                  const avgCentroid = recentHistory.reduce((s, h) => s + h.centroid, 0) / recentHistory.length;
-                  const maxPeak = Math.max(...recentHistory.map(h => h.peakValue));
-                  
-                  const isSpeechLike = avgFlatness > 0.15 && avgCentroid > 300 && avgCentroid < 3800 && maxPeak < 0.85;
-                  
-                  if (!isSpeechLike) {
-                    bargeInConsecutiveFramesRef.current = 0;
-                    bargeInOnsetRef.current = 0;
-                    return;
-                  }
-                  
+                
+                // Trigger barge-in if sustained vocal harmony is verified
+                if (sustainedMs >= bargeInSustainMsRef.current || bargeInConsecutiveFramesRef.current >= 8) {
                   hasFiredBargeInRef.current = true;
                   const onsetTime = bargeInOnsetRef.current;
                   console.log(
-                    `[ACOUSTIC BARGE-IN TRIGGERED] Sustained voice verified (${sustainedMs.toFixed(0)}ms, RMS=${rms.toFixed(3)})`
+                    `[HARMONIC BARGE-IN TRIGGERED] Human vocal cords verified (${sustainedMs.toFixed(0)}ms, F0_Periodicity=${pitchInfo.periodicity.toFixed(2)}, RMS=${rms.toFixed(3)})`
                   );
                   if (onBargeInRef.current) {
                     onBargeInRef.current({
-                      source: "vad_acoustic_fallback",
+                      source: "vad_harmonic_formant",
                       rms,
+                      periodicity: pitchInfo.periodicity,
                       noiseFloor: noiseFloorRef.current,
                       onsetTime,
                       timestamp: perfNow,
@@ -359,6 +416,7 @@ export function useVoiceActivityDetector({
                 }
               }
             } else {
+              // Rapid decay if noise fails speech criteria (e.g. typing click or fan noise)
               bargeInConsecutiveFramesRef.current = Math.max(0, bargeInConsecutiveFramesRef.current - 1);
               if (bargeInConsecutiveFramesRef.current === 0) {
                 bargeInOnsetRef.current = 0;
@@ -367,13 +425,18 @@ export function useVoiceActivityDetector({
           }
         }
 
-        // Layer 3: Transcript-Locked Answer Auto-Completion
+        // Layer 3: Transcript-Locked Answer Auto-Completion & Harmonic Speech Gating
         if (enabledRef.current && !hasFiredCompletionRef.current) {
           const duration = now - recordingStartTimeRef.current;
           const words = lastTranscriptTextRef.current.split(/\s+/).filter(Boolean);
           const wordCount = words.length;
 
-          if (rms >= effectiveSpeechThreshold) {
+          // Gating: Real human vocal resonance OR active speech transcript changes
+          const isAcousticVocal = (pitchInfo.isVoiced || formantInfo.isHumanSpeech) && rms >= effectiveSpeechThreshold;
+          const isTranscriptActive = (now - lastTranscriptChangeTimeRef.current) < 1400 && wordCount > 0;
+          const isHumanSpeaking = isAcousticVocal || isTranscriptActive;
+
+          if (isHumanSpeaking) {
             lastSpeechTimeRef.current = now;
             totalSpokenDurationMsRef.current += 16;
 

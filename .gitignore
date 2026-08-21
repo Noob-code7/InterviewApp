@@ -46,3 +46,6 @@ ai-services/nlp-service/models/
 
 # Kokoro TTS model binaries (download on startup, do not commit)
 ai-services/voice-service/models/
+
+# Local scratch / verification scripts
+scratch/

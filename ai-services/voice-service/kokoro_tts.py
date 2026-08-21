@@ -147,6 +147,9 @@ class TtsEngine:
         self._kokoro = None
         self._cache = {}
         self._load_lock = threading.Lock()
+        # Bounds concurrent ONNX inference so a burst of pre-synthesis requests
+        # cannot thrash CPU; cache hits bypass this entirely.
+        self._infer_semaphore = threading.Semaphore(2)
 
     def is_ready(self):
         return self._kokoro is not None
@@ -204,7 +207,8 @@ class TtsEngine:
             return None
 
         try:
-            samples, sample_rate = kokoro.create(text=text, voice=voice, speed=float(speed), lang="en-us")
+            with self._infer_semaphore:
+                samples, sample_rate = kokoro.create(text=text, voice=voice, speed=float(speed), lang="en-us")
         except Exception as e:
             print(f"[Kokoro TTS] Synthesis failed: {e}")
             return None

@@ -9,8 +9,7 @@ const questionHistorySchema = new mongoose.Schema(
       index: true,
     },
     questionId: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "Question",
+      type: String,
       required: true,
       index: true,
     },
@@ -43,6 +42,9 @@ const questionHistorySchema = new mongoose.Schema(
 
 // Compound unique index to prevent duplicate entries for same user/question
 questionHistorySchema.index({ userId: 1, questionId: 1 }, { unique: true });
+
+// Compound index for matching user and question text
+questionHistorySchema.index({ userId: 1, questionText: 1 });
 
 // Index for efficient querying by user and tags
 questionHistorySchema.index({ userId: 1, tags: 1 });

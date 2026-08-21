@@ -244,3 +244,47 @@ export function getRandomQuestions(array = [], count = 1) {
 
 
 
+
+
+export const INTRODUCTORY_QUESTIONS = [
+  {
+    questionText: "To start off, please introduce yourself and walk me through your background, technical interests, and what you've been working on recently.",
+    track: "hr",
+    expectedKeywords: ["background", "projects", "experience", "education", "passion", "skills"],
+    expectedConcepts: ["Clear career narrative", "Relevant technical stack", "Recent hands-on work", "Motivation"],
+    referenceAnswer: "Candidate should deliver a structured 60-90 second introduction covering education, core technical skills, recent projects/experience, and career goals."
+  },
+  {
+    questionText: "How would you describe yourself as an engineer, and what key experiences or projects have shaped your journey so far?",
+    track: "hr",
+    expectedKeywords: ["engineer", "journey", "problem solving", "learning", "growth", "projects"],
+    expectedConcepts: ["Engineering identity", "Technical growth", "Key milestone experiences"],
+    referenceAnswer: "Candidate should articulate their engineering philosophy, primary strengths, and formative technical experiences."
+  },
+  {
+    questionText: "Could you give me a brief overview of your background, your primary technical strengths, and what drives your passion for software development?",
+    track: "hr",
+    expectedKeywords: ["strengths", "passion", "software", "development", "architecture", "coding"],
+    expectedConcepts: ["Technical competencies", "Intrinsic motivation", "Structured communication"],
+    referenceAnswer: "Candidate should highlight their core skill set, engineering passion, and alignment with software development."
+  },
+  {
+    questionText: "Tell me about yourself — specifically, what are your core technical domains of interest, and what are you most excited to build or solve next?",
+    track: "hr",
+    expectedKeywords: ["domains", "interests", "solve", "build", "future", "goals"],
+    expectedConcepts: ["Domain focus", "Forward-looking curiosity", "Problem-solving ambition"],
+    referenceAnswer: "Candidate should outline their primary domain expertise and share enthusiasm for challenging technical problems."
+  },
+  {
+    questionText: "Walk me through your resume and technical journey: what motivated you to pursue software engineering, and what are the flagship highlights of your work?",
+    track: "hr",
+    expectedKeywords: ["journey", "motivation", "highlights", "achievements", "impact"],
+    expectedConcepts: ["Origin story/motivation", "Chronological technical growth", "Major accomplishments"],
+    referenceAnswer: "Candidate should present a cohesive summary of their journey, pivotal projects, and key technical achievements."
+  }
+];
+
+export function getIntroductoryQuestion(sessionEntropy = 0) {
+  const index = Math.abs(Number(sessionEntropy) || 0) % INTRODUCTORY_QUESTIONS.length;
+  return INTRODUCTORY_QUESTIONS[index];
+}

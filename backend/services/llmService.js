@@ -21,6 +21,7 @@ export const generateProjectQuestions = async (
         sessionId: options.sessionId || null,
         sessionIndex: options.sessionIndex || 0,
         previousQuestions: options.previousQuestions || [],
+        resumeText: options.resumeText || null,
       },
       { timeout: 30000 }
     );
@@ -98,8 +99,51 @@ export const evaluateProjectAnswer = async (
   }
 };
 
+/**
+ * Generate dynamic technical scenario-based questions with the LLM.
+ */
+export const generateTechnicalQuestions = async (
+  role = "Software Engineer",
+  topics = [],
+  count = 4
+) => {
+  try {
+    const response = await axios.post(
+      `${NLP_SERVICE_URL}/generate-technical-questions`,
+      { role, topics, count },
+      { timeout: 25000 }
+    );
+    return response.data?.data?.questions || response.data?.questions || [];
+  } catch (err) {
+    console.warn("[LLMService] Error generating technical questions with LLM:", err.message);
+    return [];
+  }
+};
+
+/**
+ * Generate dynamic HR / Behavioral STAR questions with the LLM.
+ */
+export const generateHRQuestions = async (
+  role = "Software Engineer",
+  count = 4
+) => {
+  try {
+    const response = await axios.post(
+      `${NLP_SERVICE_URL}/generate-hr-questions`,
+      { role, count },
+      { timeout: 25000 }
+    );
+    return response.data?.data?.questions || response.data?.questions || [];
+  } catch (err) {
+    console.warn("[LLMService] Error generating HR questions with LLM:", err.message);
+    return [];
+  }
+};
+
 export default {
   generateProjectQuestions,
   generateProjectFollowUp,
   evaluateProjectAnswer,
+  generateTechnicalQuestions,
+  generateHRQuestions,
 };

@@ -206,8 +206,8 @@ export const sendToAnalyzer = async (filePath, targetUrl, fieldName, referenceIm
       clarityScore: 80,
       dominantEmotion: 'neutral',
       emotionProbabilities: {
-        neutral: 0.62, calm: 0.22, happy: 0.08, sad: 0.02,
-        angry: 0.02, fearful: 0.02, disgust: 0.01, surprised: 0.01,
+        neutral: 62.0, calm: 22.0, happy: 8.0, sad: 2.0,
+        angry: 2.0, fearful: 2.0, disgust: 1.0, surprised: 1.0,
       },
     };
   }

@@ -43,204 +43,260 @@ def extract_text_from_bytes(file_bytes: bytes, filename: str) -> str:
 
     return text.strip()
 
+# ── Section Segmentation ────────────────────────────────────────────────────────
+
+SECTION_PATTERNS = {
+    "PROJECTS": re.compile(r'^(?:key\s+|technical\s+|academic\s+|personal\s+|featured\s+|notable\s+|selected\s+)*projects(?:\s*&.*|\s*:.*)?$', re.IGNORECASE),
+    "EXPERIENCE": re.compile(r'^(?:work\s+|professional\s+|relevant\s+|industry\s+|internship\s+)*(?:experience|employment|work\s+history|internships)(?:\s*:.*)?$', re.IGNORECASE),
+    "SKILLS": re.compile(r'^(?:technical\s+|core\s+)*(?:skills|competencies|technologies|tools\s*&\s*technologies|languages|technical\s+stack)(?:\s*:.*)?$', re.IGNORECASE),
+    "EDUCATION": re.compile(r'^(?:education|academic\s+background|qualifications|coursework)(?:\s*:.*)?$', re.IGNORECASE),
+    "SUMMARY": re.compile(r'^(?:professional\s+|career\s+)*(?:summary|profile|about\s+me|objective)(?:\s*:.*)?$', re.IGNORECASE),
+}
+
+# Regex to detect tech stack / tools descriptor lines inside project entries
+STACK_PREFIX_RE = re.compile(
+    r'^(?:tech(?:nology)?\s+stack|technologies|tools(?:\s+used)?|stack|built\s+with|environment|languages|frameworks|libraries|frontend|backend|database|platform)\s*[:\-–—]\s*(.*)$',
+    re.IGNORECASE
+)
+
+def segment_resume_sections(text: str) -> Dict[str, List[str]]:
+    """Segment raw resume text into distinct semantic sections based on document structure."""
+    raw_lines = [l.strip() for l in text.split('\n') if l.strip()]
+
+    current_section = "HEADER"
+    section_lines: Dict[str, List[str]] = {
+        "HEADER": [],
+        "SUMMARY": [],
+        "SKILLS": [],
+        "PROJECTS": [],
+        "EXPERIENCE": [],
+        "EDUCATION": [],
+        "OTHER": []
+    }
+
+    for line in raw_lines:
+        cleaned_line = re.sub(r'^[#*_\-•\s\d\.\)]+', '', line).strip()
+        
+        matched_section = None
+        for sec_name, pattern in SECTION_PATTERNS.items():
+            if pattern.match(cleaned_line):
+                matched_section = sec_name
+                break
+        
+        if matched_section:
+            current_section = matched_section
+            continue
+
+        section_lines[current_section].append(line)
+
+    return section_lines
+
+# ── Skill & Domain Extraction ───────────────────────────────────────────────────
+
+DOMAIN_TAXONOMY = {
+    "dbms": ["dbms", "database", "sql", "mysql", "postgresql", "mongodb", "acid", "relational", "nosql", "redis", "timescaledb", "indexing", "sharding", "normalization", "transactions"],
+    "os": ["os", "operating system", "deadlock", "process", "thread", "concurrency", "semaphore", "mutex", "virtual memory", "linux", "ipc", "scheduling", "paging", "kernel"],
+    "networking": ["network", "networking", "tcp", "udp", "http", "https", "socket", "websocket", "webrtc", "dns", "ip", "osi", "tls", "ssl", "rest", "grpc"],
+    "oop": ["oop", "oops", "object oriented", "inheritance", "polymorphism", "encapsulation", "class", "abstraction", "interface", "design patterns", "solid"],
+    "ds": ["data structures", "algorithms", "dsa", "tree", "graph", "binary search", "hash table", "heap", "stack", "queue", "dynamic programming", "recursion", "sorting"],
+    "fullstack": ["react", "node", "express", "fastapi", "full stack", "fullstack", "frontend", "backend", "web", "restful", "microservices", "next.js", "vite", "typescript", "javascript"],
+    "cloud": ["aws", "docker", "kubernetes", "ci/cd", "cloud", "ec2", "s3", "gcp", "azure", "serverless", "devops"]
+}
+
 def detect_domain_tags_from_text(text: str) -> List[str]:
     """Detect core CS & engineering domain tags present in resume text."""
     lower_text = text.lower()
     tags = set()
 
-    # OOP / Object Oriented
-    if any(w in lower_text for w in ["oop", "oops", "object oriented", "inheritance", "polymorphism", "encapsulation", "class", "abstraction"]):
-        tags.update(["oops", "oop", "object-oriented"])
-
-    # DBMS / Database
-    if any(w in lower_text for w in ["dbms", "database", "sql", "mysql", "postgresql", "mongodb", "acid", "relational", "nosql", "redis", "timescaledb"]):
-        tags.update(["dbms", "sql", "database"])
-
-    # Operating Systems
-    if any(w in lower_text for w in ["os", "operating system", "deadlock", "process", "thread", "concurrency", "semaphore", "virtual memory", "linux"]):
-        tags.update(["os", "operating-systems"])
-
-    # Networking
-    if any(w in lower_text for w in ["networking", "tcp", "udp", "ip", "http", "https", "socket", "dns", "osi", "rest api", "webrtc"]):
-        tags.update(["networking", "networks"])
-
-    # Data Structures & Algorithms
-    if any(w in lower_text for w in ["data structure", "algorithm", "tree", "graph", "linked list", "array", "stack", "queue", "binary search", "dsa"]):
-        tags.update(["ds", "data-structures", "algorithms"])
-
-    # Web & Fullstack
-    if any(w in lower_text for w in ["react", "node", "express", "fastapi", "django", "javascript", "typescript", "html", "css", "web", "next.js", "microservices"]):
-        tags.update(["web", "fullstack", "frontend", "backend"])
+    for domain, keywords in DOMAIN_TAXONOMY.items():
+        if any(re.search(r'\b' + re.escape(kw) + r'\b', lower_text) for kw in keywords):
+            tags.add(domain)
+            if domain == "dbms":
+                tags.update(["sql", "database"])
+            elif domain == "os":
+                tags.update(["operating-systems"])
+            elif domain == "networking":
+                tags.update(["networks"])
+            elif domain == "oop":
+                tags.update(["oops", "object-oriented"])
+            elif domain == "ds":
+                tags.update(["data-structures", "algorithms"])
 
     return list(tags)
 
+ALL_SKILL_PATTERNS = [
+    "Python", "JavaScript", "TypeScript", "React", "React.js", "Next.js", "Node.js", "Express", "Express.js",
+    "FastAPI", "Django", "Flask", "Java", "Spring", "Spring Boot", "C++", "C#", "Go", "Golang", "Rust",
+    "MongoDB", "PostgreSQL", "MySQL", "Redis", "TimescaleDB", "Cassandra", "SQLite", "GraphQL", "RESTful APIs",
+    "Docker", "Kubernetes", "AWS", "EC2", "S3", "GCP", "Azure", "Git", "GitHub", "CI/CD", "Linux",
+    "WebSockets", "WebRTC", "Web Audio API", "BullMQ", "Celery", "Kafka", "RabbitMQ", "PyTorch", "TensorFlow",
+    "Tailwind CSS", "Tailwind", "CSS3", "HTML5", "Redux", "Redux Toolkit", "Monaco Editor", "Vite",
+    "GSAP", "ScrollTrigger", "Three.js", "Socket.io",
+    "Operating Systems", "Data Structures", "Algorithms", "DBMS", "OOP", "Object-Oriented Programming",
+    "Computer Networks", "Microservices", "System Design", "Distributed Systems"
+]
+
 def extract_skills_from_text(text: str) -> List[str]:
-    """Extract list of recognized technical skills from resume text."""
-    known_skills = [
-        "Python", "JavaScript", "TypeScript", "React", "Next.js", "Node.js", "Express",
-        "FastAPI", "Django", "Flask", "MongoDB", "PostgreSQL", "MySQL", "Redis",
-        "Docker", "Kubernetes", "AWS", "Cloudflare", "Java", "C++", "C#", "Spring Boot",
-        "Tailwind", "HTML", "CSS", "Git", "REST API", "GraphQL", "Microservices",
-        "Kafka", "RabbitMQ", "PyTorch", "TensorFlow", "OpenCV", "NLP", "Operating Systems",
-        "Database Systems", "Data Structures", "Algorithms", "DBMS", "OOP", "OOPS", "SQL",
-        "WebRTC", "TimescaleDB", "Prometheus", "Grafana", "Go", "Golang", "Rust", "Linux"
-    ]
-    found = []
-    for skill in known_skills:
-        pattern = r'\b' + re.escape(skill) + r'\b'
-        if re.search(pattern, text, re.IGNORECASE):
-            if skill not in found:
-                found.append(skill)
-    return found
+    """Extract recognized programming languages, frameworks, and technical competencies."""
+    lower_text = text.lower()
+    matched = []
+    for skill in ALL_SKILL_PATTERNS:
+        pattern = r'(?<!\w)' + re.escape(skill.lower()) + r'(?!\w)'
+        if re.search(pattern, lower_text):
+            canonical = skill.replace(".js", "").strip()
+            if canonical not in matched:
+                matched.append(canonical)
+    return matched
 
-def clean_project_title(raw_title: str) -> str:
-    """Clean and extract a concise, authentic project title."""
-    title = raw_title.strip()
-    title = re.sub(r'^(?:project\s*\d*[:.-]?\s*|\d+[\.\)]\s*|[-•*–—]\s*)', '', title, flags=re.IGNORECASE).strip()
-    title = re.sub(r'\s*\([^)]*\)$', '', title).strip()
-    title = re.split(r'\s+[|–—]\s+', title)[0].strip()
-    title = re.sub(r'^(?:title|name)[:\s]+', '', title, flags=re.IGNORECASE).strip()
-    return title
-
-def is_bullet_line(line: str) -> bool:
-    """Check if a line represents a bullet point or action description."""
-    trimmed = line.strip()
-    if not trimmed:
-        return False
-    if re.match(r'^(?:[-•*–—+>]|\d+[\.\)])\s+', trimmed):
-        return True
-    first_word = trimmed.split()[0].lower()
-    action_verbs = [
-        "built", "developed", "architected", "engineered", "implemented", "designed",
-        "created", "integrated", "optimized", "reduced", "scaled", "led", "managed",
-        "utilized", "orchestrated", "deployed", "refactored", "migrated", "automated",
-        "solved", "achieved", "configured", "spearheaded", "authored", "improved"
-    ]
-    if first_word in action_verbs:
-        return True
-    return False
+# ── Structured Entity Extractors ───────────────────────────────────────────────
 
 def extract_projects_from_text(text: str) -> List[Dict[str, Any]]:
     """
-    Extract candidate project titles, technologies, and full descriptions from resume text.
-    Strictly separates Projects from Tech Stacks and bullet points.
+    Extract structured projects strictly from the PROJECTS section.
+    Maintains clean boundaries so that work experience or tech stack headers are never parsed as projects.
     """
-    projects = []
-    lines = [line.strip() for line in text.split("\n") if line.strip()]
+    sections = segment_resume_sections(text)
+    project_lines = sections.get("PROJECTS", [])
 
-    project_section_started = False
+    if not project_lines:
+        project_lines = sections.get("OTHER", []) + sections.get("HEADER", [])
+
+    projects = []
     current_proj = None
 
-    section_headers = [
-        "projects", "academic projects", "personal projects", "key projects",
-        "technical projects", "experience", "work experience", "professional experience",
-        "selected projects", "relevant experience"
-    ]
-    stop_headers = [
-        "education", "certifications", "achievements", "interests", "activities",
-        "skills", "technical skills", "core competencies", "languages", "coursework",
-        "honors", "publications", "leadership"
-    ]
-    
-    invalid_titles = {
-        "skills", "technical skills", "languages", "frameworks", "tools",
-        "technologies", "databases", "core competencies", "education", "experience",
-        "projects", "academic projects", "developer", "featured project"
-    }
+    for line in project_lines:
+        is_bullet = bool(re.match(r'^(?:[-•*–—+>]|\d+[\.\)]|[^\w\s])\s*', line))
+        bullet_text = re.sub(r'^(?:[-•*–—+>]|\d+[\.\)]|[^\w\s])\s*', '', line).strip()
 
-    for line in lines:
-        lower_line = line.lower().strip()
-
-        # Check section boundaries
-        if any(lower_line == h or lower_line.startswith(h + ":") or lower_line.startswith(h + " -") for h in section_headers):
-            project_section_started = True
-            if current_proj and (len(current_proj["description"]) > 10 or current_proj["techStack"]):
-                projects.append(current_proj)
-            current_proj = None
-            continue
-        elif project_section_started and any(lower_line == h or lower_line.startswith(h + ":") for h in stop_headers):
-            project_section_started = False
-            if current_proj and (len(current_proj["description"]) > 10 or current_proj["techStack"]):
-                projects.append(current_proj)
-            current_proj = None
+        if is_bullet and current_proj:
+            if current_proj["description"]:
+                current_proj["description"] += " " + bullet_text
+            else:
+                current_proj["description"] = bullet_text
+            current_proj["highlights"].append(bullet_text)
+            
+            for s in extract_skills_from_text(bullet_text):
+                if s not in current_proj["techStack"]:
+                    current_proj["techStack"].append(s)
             continue
 
-        if not project_section_started:
-            continue
-
-        # Inside project section: Check if line is a bullet point or a new project header
-        if is_bullet_line(line):
+        # Check if line is a Stack / Tools descriptor line (e.g. "Stack: React.js, TypeScript, GSAP...")
+        m_stack = STACK_PREFIX_RE.match(line)
+        if m_stack:
+            tech_str = m_stack.group(1)
+            extracted = extract_skills_from_text(tech_str)
+            if not extracted:
+                extracted = [t.strip() for t in re.split(r'[,/|]', tech_str) if len(t.strip()) > 1]
             if current_proj:
-                cleaned_line = re.sub(r'^(?:[-•*–—+>]|\d+[\.\)])\s*', '', line).strip()
-                if current_proj["description"]:
-                    current_proj["description"] += " " + cleaned_line
-                else:
-                    current_proj["description"] = cleaned_line
-                
-                for s in extract_skills_from_text(line):
+                for t in extracted:
+                    if t not in current_proj["techStack"]:
+                        current_proj["techStack"].append(t)
+            continue
+
+        # Header line for project: e.g. "Project Title | React, Node.js, FastAPI"
+        parts = [p.strip() for p in re.split(r'\||—|–', line) if p.strip()]
+        candidate_title = parts[0] if parts else line
+
+        # If candidate title starts with "Stack:" or "Tech Stack:" etc.
+        m_cand_stack = STACK_PREFIX_RE.match(candidate_title)
+        if m_cand_stack:
+            if current_proj:
+                for t in extract_skills_from_text(m_cand_stack.group(1)):
+                    if t not in current_proj["techStack"]:
+                        current_proj["techStack"].append(t)
+            continue
+
+        # Extract inline parens tech stack: "Real-Time Chat (React, WebSocket)"
+        paren_match = re.search(r'\(([^)]+)\)', candidate_title)
+        inline_tech = []
+        if paren_match:
+            inline_tech = extract_skills_from_text(paren_match.group(1))
+            candidate_title = re.sub(r'\s*\([^)]*\)', '', candidate_title).strip()
+
+        candidate_title = re.sub(r'^[#*_\-•\s\d\.\)]+', '', candidate_title).strip()
+        if len(candidate_title) < 3 or len(candidate_title) > 75:
+            continue
+
+        # If candidate_title is purely a comma-separated list of recognized skills
+        extracted_skills = extract_skills_from_text(candidate_title)
+        if len(extracted_skills) >= 2 and (',' in candidate_title or '/' in candidate_title):
+            if current_proj:
+                for s in extracted_skills:
                     if s not in current_proj["techStack"]:
                         current_proj["techStack"].append(s)
-            else:
-                cleaned_line = re.sub(r'^(?:[-•*–—+>]|\d+[\.\)])\s*', '', line).strip()
-                current_proj = {
-                    "title": "Technical Engineering Project",
-                    "techStack": extract_skills_from_text(line),
-                    "description": cleaned_line,
-                    "role": "Developer"
-                }
-        else:
-            clean_title = clean_project_title(line)
-            if clean_title.lower() in invalid_titles or len(clean_title) < 2:
-                continue
+            continue
 
-            if current_proj and (len(current_proj["description"]) > 10 or current_proj["techStack"]):
-                projects.append(current_proj)
+        # Extract stack from pipe suffix
+        pipe_tech = []
+        if len(parts) > 1:
+            pipe_tech = extract_skills_from_text(" ".join(parts[1:]))
 
-            proj_skills = extract_skills_from_text(line)
-            current_proj = {
-                "title": clean_title,
-                "techStack": proj_skills,
-                "description": "",
-                "role": "Developer"
-            }
+        combined_stack = list(dict.fromkeys(inline_tech + pipe_tech + extract_skills_from_text(line)))
 
-    if current_proj and (len(current_proj["description"]) > 10 or current_proj["techStack"]):
+        if current_proj and (current_proj["description"] or current_proj["techStack"]):
+            projects.append(current_proj)
+
+        current_proj = {
+            "title": candidate_title,
+            "techStack": combined_stack,
+            "description": "",
+            "highlights": [],
+            "role": "Developer"
+        }
+
+    if current_proj and (current_proj["description"] or current_proj["techStack"]):
         projects.append(current_proj)
-
-    # Fallback if no structured project was extracted
-    if not projects:
-        action_lines = [l for l in lines if is_bullet_line(l) and any(w in l.lower() for w in ["developed", "built", "implemented", "system", "platform", "app", "model", "service"])]
-        if action_lines:
-            sample_desc = " ".join([re.sub(r'^(?:[-•*–—+>]|\d+[\.\)])\s*', '', l) for l in action_lines[:3]])
-            skills = extract_skills_from_text(sample_desc)
-            title_candidate = "Core Engineering System"
-            match = re.search(r'\b(?:built|developed|implemented|architected)\s+(?:a|an|the)?\s*([A-Za-z0-9\-\s]{3,30}?)(?:\s+(?:using|with|in|to|for)\b|$)', sample_desc, re.IGNORECASE)
-            if match and len(match.group(1).strip()) > 3:
-                title_candidate = match.group(1).strip().title()
-
-            projects.append({
-                "title": title_candidate,
-                "techStack": skills or ["Full Stack", "System Architecture"],
-                "description": sample_desc[:400],
-                "role": "Developer"
-            })
 
     return projects[:4]
 
+def extract_experience_from_text(text: str) -> List[Dict[str, Any]]:
+    """Extract structured work experience entries strictly from the EXPERIENCE section."""
+    sections = segment_resume_sections(text)
+    exp_lines = sections.get("EXPERIENCE", [])
+
+    experience = []
+    current_exp = None
+
+    for line in exp_lines:
+        is_bullet = bool(re.match(r'^(?:[-•*–—+>]|\d+[\.\)]|[^\w\s])\s*', line))
+        bullet_text = re.sub(r'^(?:[-•*–—+>]|\d+[\.\)]|[^\w\s])\s*', '', line).strip()
+
+        if is_bullet and current_exp:
+            current_exp["bullets"].append(bullet_text)
+            continue
+
+        parts = [p.strip() for p in re.split(r'\||—|–', line) if p.strip()]
+        if parts:
+            if current_exp and (current_exp["role"] or current_exp["bullets"]):
+                experience.append(current_exp)
+            current_exp = {
+                "role": parts[0],
+                "company": parts[1] if len(parts) > 1 else "",
+                "bullets": []
+            }
+
+    if current_exp and (current_exp["role"] or current_exp["bullets"]):
+        experience.append(current_exp)
+
+    return experience
+
+# ── High-Precision Question Synthesis Envelope ─────────────────────────────────
+
 def synthesize_questions_from_resume(text: str, role: str = "Software Engineer", count: int = 5) -> Dict[str, Any]:
-    """Synthesize candidate-specific interview questions grounded in extracted resume text."""
+    """Synthesize candidate-specific interview questions grounded strictly in segmented resume structure."""
     if not text:
         text = role
 
     domain_tags = detect_domain_tags_from_text(text)
     found_skills = extract_skills_from_text(text)
     extracted_projects = extract_projects_from_text(text)
+    extracted_experience = extract_experience_from_text(text)
 
     questions = []
 
     # 1. Project-Grounded Questions (Track 3)
     if extracted_projects:
-        for idx, proj in enumerate(extracted_projects[:3]):
+        for proj in extracted_projects[:3]:
             stack_str = ", ".join(proj["techStack"]) if proj["techStack"] else "relevant technologies"
             questions.append({
                 "questionText": f"In your project '{proj['title']}', walk me through the end-to-end architecture, data flow, and how you engineered the core features using {stack_str}.",
@@ -263,13 +319,14 @@ def synthesize_questions_from_resume(text: str, role: str = "Software Engineer",
             "referenceAnswer": f"Candidate should demonstrate practical experience and sound design with {skill1}."
         })
 
-    # 3. Behavioral / HR (Track 1)
+    # 3. Behavioral / HR Context (Track 1)
+    exp_context = f" at {extracted_experience[0]['company']}" if extracted_experience and extracted_experience[0].get("company") else ""
     questions.append({
-        "questionText": f"As a candidate targeting {role} positions, describe a situation from your project experience where technical requirements changed unexpectedly. How did you adapt?",
+        "questionText": f"To start off, please introduce yourself and walk me through your technical background, core engineering strengths, and what drives your passion for {role} positions.",
         "track": "hr",
-        "expectedConcepts": ["Clear situational context (STAR)", "Adaptive problem solving", "Team/stakeholder communication"],
-        "keywords": ["adaptability", "communication", "requirements", "problem solving"],
-        "referenceAnswer": "Candidate should articulate flexibility, structured prioritization, and proactive communication."
+        "expectedConcepts": ["Clear situational narrative", "Relevant technical stack", "Motivation & achievements"],
+        "keywords": ["background", "strengths", "experience", "education", "passion", "skills"],
+        "referenceAnswer": "Candidate should deliver a structured 60-90 second introduction covering education, core technical skills, recent projects/experience, and career goals."
     })
 
     return {
@@ -277,5 +334,6 @@ def synthesize_questions_from_resume(text: str, role: str = "Software Engineer",
         "domainTags": domain_tags,
         "skills": found_skills,
         "projects": extracted_projects,
-        "summary": f"Detected {len(found_skills)} skills across {len(domain_tags)} technical domains and {len(extracted_projects)} projects."
+        "experience": extracted_experience,
+        "summary": f"Identified {len(extracted_projects)} technical projects, {len(extracted_experience)} work experience roles, and {len(found_skills)} skills across {len(domain_tags)} domains."
     }

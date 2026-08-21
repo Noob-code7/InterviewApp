@@ -16,29 +16,32 @@ export const recordQuestionHistory = async (req, res) => {
 
     const userId = req.user._id;
 
-    const bulkOps = questions.map((q) => {
-      const qId = q._id || q.questionId;
-      if (!qId) return null;
+    const bulkOps = questions
+      .map((q) => {
+        const qId = q._id || q.questionId;
+        if (!qId) return null;
 
-      return {
-        updateOne: {
-          filter: { userId, questionId: qId },
-          update: {
-            $inc: { timesAsked: 1 },
-            $set: {
-              questionText: q.questionText,
-              tags: q.tags || [],
-              track: q.track || "subject",
-              askedAt: new Date(),
+        return {
+          updateOne: {
+            filter: { userId, questionId: qId },
+            update: {
+              $inc: { timesAsked: 1 },
+              $set: {
+                questionText: q.questionText,
+                tags: q.tags || [],
+                track: q.track || "subject",
+                askedAt: new Date(),
+              },
+              $setOnInsert: {
+                userId,
+                questionId: qId,
+              },
             },
-            $setOnInsert: {
-              userId,
-              questionId: qId,
-            },
+            upsert: true,
           },
-          upsert: true,
         };
-      }).filter(Boolean);
+      })
+      .filter(Boolean);
 
     if (bulkOps.length > 0) {
       await QuestionHistory.bulkWrite(bulkOps, { ordered: false });
@@ -97,17 +100,21 @@ export const getQuestionHistoryStats = async (req, res) => {
         },
       },
       { $sort: { count: -1 } },
-    );
+    ]);
 
     const totalQuestions = await QuestionHistory.countDocuments({ userId });
     const uniqueQuestions = await QuestionHistory.distinct("questionId", { userId });
 
-    return sendSuccess(res, {
-      totalRecords: totalStats.length,
-      totalQuestions,
-      uniqueQuestions: uniqueQuestions.length,
-      byTag: stats,
-    }, 200);
+    return sendSuccess(
+      res,
+      {
+        totalRecords: stats.length,
+        totalQuestions,
+        uniqueQuestions: uniqueQuestions.length,
+        byTag: stats,
+      },
+      200
+    );
   } catch (err) {
     console.error("[QuestionHistory] Error fetching stats:", err);
     return sendError(res, err.message, 500);

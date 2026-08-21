@@ -9,6 +9,7 @@ const RESOLVE_SAFETY_TIMEOUT = 15000;
 let activeGenerationId = 0;
 let abortControllerRef = null;
 let cache = new Map();
+let inFlightRequests = new Map();
 
 let audioContext = null;
 let currentAudioSource = null;
@@ -85,19 +86,36 @@ async function synthesize(text, voice, rate, signal) {
   const cacheKey = getCacheKey(text, voice, rate);
   if (cache.has(cacheKey)) return cache.get(cacheKey);
 
-  const { data } = await api.post(
-    "/api/tts",
-    { text, voice, rate },
-    { responseType: "arraybuffer", signal, timeout: 60000 }
-  );
-
-  const wav = new Uint8Array(data);
-  if (cache.size >= CACHE_LIMIT) {
-    const oldest = cache.keys().next().value;
-    cache.delete(oldest);
+  if (inFlightRequests.has(cacheKey)) {
+    try {
+      return await inFlightRequests.get(cacheKey);
+    } catch (err) {
+      // Fall through to retry if in-flight failed
+    }
   }
-  cache.set(cacheKey, wav);
-  return wav;
+
+  const fetchPromise = (async () => {
+    try {
+      const { data } = await api.post(
+        "/api/tts",
+        { text, voice, rate },
+        { responseType: "arraybuffer", signal, timeout: 60000 }
+      );
+
+      const wav = new Uint8Array(data);
+      if (cache.size >= CACHE_LIMIT) {
+        const oldest = cache.keys().next().value;
+        cache.delete(oldest);
+      }
+      cache.set(cacheKey, wav);
+      return wav;
+    } finally {
+      inFlightRequests.delete(cacheKey);
+    }
+  })();
+
+  inFlightRequests.set(cacheKey, fetchPromise);
+  return fetchPromise;
 }
 
 export function cancelTTS() {
