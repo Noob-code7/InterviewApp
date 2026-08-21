@@ -31,7 +31,9 @@ const nlpAnalysisSchema = new mongoose.Schema({
   feedback:          { type: String, default: '' },
   strengths:         { type: [String], default: [] },
   improvements:      { type: [String], default: [] },
-  source:            { type: String, default: 'local' },
+  source:            { type: String, default: 'local' },
+
+  misconceptionsDetected: { type: [String], default: [] },
 }, { _id: false })
 
 const followUpSchema = new mongoose.Schema({
@@ -84,6 +86,8 @@ const sessionSchema = new mongoose.Schema(
       required: true,
     },
     questionCount:  { type: Number, min: 1, max: 20, default: 5 },
+    // Technical mode: candidate-selected subjects of interest (canonical tags)
+    subjectsOfInterest: { type: [String], default: [] },
     status: {
       type: String,
       enum: ['setup', 'in-progress', 'processing', 'completed', 'failed'],
@@ -126,6 +130,12 @@ const sessionSchema = new mongoose.Schema(
   },
   { timestamps: true, toJSON: { virtuals: true }, toObject: { virtuals: true } }
 )
+
+// Compound indexes matching the dominant query patterns (user-scoped listings,
+// status-filtered dashboards, and recent-session sorting). _id + userId field
+// index already exist; these cover the composite filters.
+sessionSchema.index({ userId: 1, status: 1 })
+sessionSchema.index({ userId: 1, createdAt: -1 })
 
 sessionSchema.virtual('durationSeconds').get(function () {
   if (!this.startedAt || !this.completedAt) return null

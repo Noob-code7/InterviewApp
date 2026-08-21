@@ -15,6 +15,15 @@ const DEPARTMENTS = [
   "Electrical Engineering (EEE)", "Mechanical Engineering", "Other Specialized Engineering",
 ];
 
+const SUBJECT_OPTIONS = [
+  { id: "os", label: "Operating Systems (OS)" },
+  { id: "dbms", label: "Database Management Systems (DBMS)" },
+  { id: "networking", label: "Computer Networks" },
+  { id: "oop", label: "Object-Oriented Programming (OOP)" },
+  { id: "se", label: "Software Engineering (SE)" },
+  { id: "ds", label: "Data Structures & Algorithms (DSA)" },
+];
+
 export default function InterviewSetupPage() {
   const navigate = useNavigate();
   const { state } = useLocation();
@@ -28,6 +37,7 @@ export default function InterviewSetupPage() {
   const [graduationYear, setGraduationYear] = useState("2026");
   const [role, setRole] = useState("Fullstack Systems Engineer");
   const [questionCount, setQuestionCount] = useState(5);
+  const [selectedSubjects, setSelectedSubjects] = useState([]);
   const [company, setCompany] = useState("");
   const [includeWritingTest, setIncludeWritingTest] = useState(true);
 
@@ -74,6 +84,12 @@ export default function InterviewSetupPage() {
     }
   };
 
+  const toggleSubject = (id) => {
+    setSelectedSubjects((prev) =>
+      prev.includes(id) ? prev.filter((s) => s !== id) : [...prev, id]
+    );
+  };
+
   const requestPermissions = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
@@ -108,6 +124,7 @@ export default function InterviewSetupPage() {
         role: interviewType === "company" && company.trim() ? company + " - " + role : role,
         interviewType,
         questionCount,
+        subjectsOfInterest: interviewType === "technical" ? selectedSubjects : [],
         includeWritingTest,
         referenceImage,
         resumeText: resumeText || role + " Candidate Resume Background",
@@ -331,6 +348,48 @@ export default function InterviewSetupPage() {
                   </div>
                 )}
 
+                {interviewType === "technical" && (
+                  <div className="p-5 bg-[#FAF9F5] border border-[#E0DFD9] rounded-xl space-y-3">
+                    <div>
+                      <label className={labelCls}>Subject of Interest</label>
+                      <p className="text-[11px] text-[#6B7280] mt-0.5 mb-2">
+                        Select your strongest subjects (optional, multiple allowed). Questions will be
+                        asked from these subjects only. Leave empty for a balanced mix based on your role.
+                      </p>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      {SUBJECT_OPTIONS.map((subject) => {
+                        const isSelected = selectedSubjects.includes(subject.id);
+                        return (
+                          <button
+                            key={subject.id}
+                            type="button"
+                            aria-pressed={isSelected}
+                            onClick={() => toggleSubject(subject.id)}
+                            className={`flex items-center justify-between gap-2 px-4 py-2.5 text-xs font-bold rounded-lg border text-left transition-all ${
+                              isSelected
+                                ? "bg-[#1D5DFF] text-white border-[#1D5DFF] shadow-sm"
+                                : "bg-white text-[#4B5563] border-[#E0DFD9] hover:border-[#111110] hover:text-[#111110]"
+                            }`}
+                          >
+                            <span>{subject.label}</span>
+                            <span className={`w-4 h-4 rounded border flex items-center justify-center shrink-0 ${
+                              isSelected ? "bg-white/20 border-white" : "border-[#D1D5DB]"
+                            }`}>
+                              {isSelected && <span className="text-[10px] font-bold">✓</span>}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                    {selectedSubjects.length > 0 && (
+                      <p className="text-[11px] font-mono font-bold text-[#1D5DFF]">
+                        {selectedSubjects.length} subject{selectedSubjects.length > 1 ? "s" : ""} selected
+                      </p>
+                    )}
+                  </div>
+                )}
+
                 <div>
                   <label className={labelCls}>Question Count (Session Duration)</label>
                   <div className="grid grid-cols-4 gap-3">
@@ -459,6 +518,14 @@ export default function InterviewSetupPage() {
                   ["Role", role],
                   ["Format", INTERVIEW_TYPES.find((t) => t.id === interviewType)?.label || interviewType],
                   ["Questions", questionCount + " Questions"],
+                  ...(interviewType === "technical" && selectedSubjects.length > 0
+                    ? [[
+                        "Subjects",
+                        selectedSubjects
+                          .map((id) => SUBJECT_OPTIONS.find((s) => s.id === id)?.label.split(" (")[0])
+                          .join(", "),
+                      ]]
+                    : []),
                 ].map(([k, v]) => (
                   <div key={k} className="p-3 bg-[#FAF9F5] border border-[#E0DFD9] rounded-lg">
                     <div className="font-mono text-[10px] font-bold text-[#6B7280] uppercase">{k}</div>
