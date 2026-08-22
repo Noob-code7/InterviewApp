@@ -13,6 +13,7 @@ import {
   CLOSING_STATEMENTS,
   classifyInterruption,
   getRandomItem,
+  mergeTranscripts,
 } from "../utils/interviewConversationalPatterns.js";
 
 // Diagnostic trace function (dev-only: no-ops in production builds)
@@ -103,6 +104,9 @@ export default function LiveInterviewPage() {
   const liveTranscriptRef = useRef("");
   liveTranscriptRef.current = liveTranscript;
 
+  // Question-indexed persistent transcript buffer across barge-ins and continuations
+  const questionTranscriptsRef = useRef({});
+
   const interviewStateRef = useRef(interviewState);
   interviewStateRef.current = interviewState;
 
@@ -189,20 +193,34 @@ export default function LiveInterviewPage() {
       isBargeInContinuationRef.current = false;
     }
 
+    const isContinuation = isBargeInContinuationRef.current;
+    const targetIdx = (isContinuation && continuationTargetQuestionIndexRef.current !== null)
+      ? continuationTargetQuestionIndexRef.current
+      : currentQIndexRef.current;
+
+    const existingTargetTranscript = isContinuation
+      ? (questionTranscriptsRef.current[targetIdx] || questionsRef.current[targetIdx]?.voiceAnalysis?.transcript || questionsRef.current[targetIdx]?.transcript || "")
+      : "";
+
     trace("startAnswerRecording", {
       questionIndex: currentQIndexRef.current + 1,
       hasInitialText: !!initialText,
       isBargeInRecovery,
-      isContinuation: isBargeInContinuationRef.current,
-      targetIndex: continuationTargetQuestionIndexRef.current,
-      replayIndex: questionToReplayIndexRef.current
+      isContinuation,
+      targetIndex: targetIdx,
+      replayIndex: questionToReplayIndexRef.current,
+      hasExistingTranscript: !!existingTargetTranscript
     });
 
     try {
       chunksRef.current = [];
-      // Only use initialText if it's a genuine barge-in recovery (not barge-in candidate noise)
-      const transcriptToUse = isBargeInRecovery ? (initialText || "") : "";
-      trace("startAnswerRecording_transcript", { transcriptToUse, isBargeInRecovery });
+      // If continuing a previous question, merge existing partial transcript with any barge-in initial text
+      const transcriptToUse = isBargeInRecovery
+        ? (isContinuation && existingTargetTranscript
+            ? mergeTranscripts(existingTargetTranscript, initialText || "")
+            : (initialText || ""))
+        : "";
+      trace("startAnswerRecording_transcript", { transcriptToUse, isBargeInRecovery, isContinuation });
       setLiveTranscript(transcriptToUse);
       liveTranscriptRef.current = transcriptToUse;
 
@@ -254,7 +272,10 @@ export default function LiveInterviewPage() {
                 interim += e.results[i][0].transcript;
               }
             }
-            const fullText = (accumulated + " " + interim).trim();
+            const currentSpokenText = (accumulated + " " + interim).trim();
+            const fullText = isContinuation && existingTargetTranscript
+              ? mergeTranscripts(existingTargetTranscript, currentSpokenText)
+              : currentSpokenText;
             liveTranscriptRef.current = fullText;
             setLiveTranscript(fullText);
           };
@@ -631,8 +652,15 @@ export default function LiveInterviewPage() {
       if (text) {
         const intent = classifyInterruption(text);
         trace("midquestion_interruption_text", { text, intent });
-        setLiveTranscript(text);
-        liveTranscriptRef.current = text;
+        const targetIdx = continuationTargetQuestionIndexRef.current;
+        const existingForTarget = (isBargeInContinuationRef.current && targetIdx !== null)
+          ? (questionTranscriptsRef.current[targetIdx] || questionsRef.current[targetIdx]?.voiceAnalysis?.transcript || questionsRef.current[targetIdx]?.transcript || "")
+          : "";
+        const mergedLive = isBargeInContinuationRef.current && existingForTarget
+          ? mergeTranscripts(existingForTarget, text)
+          : text;
+        setLiveTranscript(mergedLive);
+        liveTranscriptRef.current = mergedLive;
       }
 
       startAnswerRecordingRef.current?.(text || "", true);
@@ -869,7 +897,20 @@ export default function LiveInterviewPage() {
         ? continuationTargetQuestionIndexRef.current
         : currentQIndexRef.current;
       const currentQ = questionsRef.current[questionIndex];
-      const currentAnswerText = liveTranscriptRef.current || "";
+
+      // Retrieve any existing stored transcript for this question
+      const existingTranscript = questionTranscriptsRef.current[questionIndex] ||
+        currentQ?.voiceAnalysis?.transcript ||
+        currentQ?.transcript ||
+        "";
+
+      // Merge current live transcript with existing transcript to prevent truncation
+      const currentAnswerText = isContinuation && existingTranscript
+        ? mergeTranscripts(existingTranscript, liveTranscriptRef.current || "")
+        : (liveTranscriptRef.current || "");
+
+      // Update question transcripts store with the consolidated text
+      questionTranscriptsRef.current[questionIndex] = currentAnswerText;
 
       if (!currentQ) {
         console.warn("[InterviewEngine] No current question found during upload");
@@ -880,7 +921,8 @@ export default function LiveInterviewPage() {
         questionIndex,
         isContinuation,
         targetQuestionId: currentQ.questionId,
-        questionToReplay: questionToReplayIndexRef.current
+        questionToReplay: questionToReplayIndexRef.current,
+        currentAnswerTextPreview: currentAnswerText.slice(0, 45)
       });
 
       // 1. Dispatch Video Upload & Analysis in the Background (Non-blocking)
@@ -889,10 +931,13 @@ export default function LiveInterviewPage() {
             isFollowUp: true,
             turn: followUpTurn,
             questionText: activeFollowUpRef.current.questionText,
+            clientTranscript: currentAnswerText,
           }
         : {
             questionIndex,
             questionText: currentQ.questionText,
+            clientTranscript: currentAnswerText,
+            isContinuation,
           };
 
       interviewApi
@@ -905,7 +950,12 @@ export default function LiveInterviewPage() {
         fd.append("audio", blob, "answer.webm");
         fd.append("sessionId", sessionId);
         fd.append("questionId", activeFollowUpRef.current ? `${currentQ.questionId}-followup-${followUpTurn}` : currentQ.questionId);
+        fd.append("questionIndex", String(questionIndex));
+        fd.append("questionText", currentQ.questionText || "");
         fd.append("clientTranscript", currentAnswerText);
+        if (isContinuation) {
+          fd.append("isContinuation", "true");
+        }
         if (currentQ.expectedKeywords) {
           fd.append("keywords", JSON.stringify(currentQ.expectedKeywords));
         }
@@ -1071,6 +1121,11 @@ export default function LiveInterviewPage() {
 
         setQuestions(fetchedQuestions);
         questionsRef.current = fetchedQuestions;
+        // Pre-populate question transcript ref with any existing answers
+        fetchedQuestions.forEach((q, idx) => {
+          const t = q.voiceAnalysis?.transcript || q.transcript || "";
+          if (t) questionTranscriptsRef.current[idx] = t;
+        });
         setLoading(false);
 
         // 3. Proactively pre-synthesize Question 0 (and Question 1) immediately in background

@@ -6,6 +6,7 @@ import axios from "axios";
 import Session from "../models/Session.js";
 import { sendToAnalyzer } from "../services/analysisService.js";
 import { sendSuccess, sendError } from "../utils/response.js";
+import { mergeTranscripts, evaluateTranscriptFallback } from "../utils/transcriptHelper.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -47,16 +48,6 @@ export const transcribeAndEvaluate = [
         console.error("Voice service error:", err.message);
       }
 
-      const clientTranscript = (req.body.clientTranscript || "").trim();
-      const finalTranscript = (voiceData.transcript && voiceData.transcript.trim()) || clientTranscript || "";
-      voiceData = {
-        ...voiceData,
-        transcript: finalTranscript,
-        confidenceScore: voiceData.confidenceScore !== undefined && voiceData.confidenceScore !== null
-          ? voiceData.confidenceScore
-          : (finalTranscript ? 85 : 0),
-      };
-
       const keywords = req.body.keywords ? JSON.parse(req.body.keywords) : null;
       let questionText = "Interview Question";
       let questionType = "mixed";
@@ -65,6 +56,7 @@ export const transcribeAndEvaluate = [
       let targetIndex = -1;
       let isFollowUp = false;
       let followUpTurn = 1;
+      let existingSlotTranscript = "";
 
       if (sessionId) {
         session = await Session.findById(sessionId);
@@ -103,6 +95,15 @@ export const transcribeAndEvaluate = [
 
           if (targetIndex !== -1) {
             const storedSlot = session.answers[targetIndex];
+            if (storedSlot) {
+              if (isFollowUp && Array.isArray(storedSlot.followUps) && storedSlot.followUps.length > 0) {
+                const fIdx = Math.min(followUpTurn - 1, storedSlot.followUps.length - 1);
+                existingSlotTranscript = storedSlot.followUps[fIdx]?.voiceAnalysis?.transcript || storedSlot.followUps[fIdx]?.transcript || "";
+              } else {
+                existingSlotTranscript = storedSlot.voiceAnalysis?.transcript || storedSlot.transcript || "";
+              }
+            }
+
             // Identity-validated spoken-question preference: the candidate was
             // asked what the frontend displayed. If the payload's questionId
             // resolves to this exact slot (Strategy 1 match on questionId/_id),
@@ -130,6 +131,29 @@ export const transcribeAndEvaluate = [
           }
         }
       }
+
+      // Safe Transcript Consolidation: Merge any existing partial answer with new speech segment
+      const clientTranscript = (req.body.clientTranscript || "").trim();
+      const whisperTranscript = (voiceData.transcript && voiceData.transcript.trim()) || "";
+
+      let finalTranscript = "";
+      if (whisperTranscript) {
+        const mergedWhisper = mergeTranscripts(existingSlotTranscript, whisperTranscript);
+        finalTranscript = mergeTranscripts(mergedWhisper, clientTranscript);
+      } else {
+        finalTranscript = mergeTranscripts(existingSlotTranscript, clientTranscript);
+      }
+      if (!finalTranscript) {
+        finalTranscript = clientTranscript || whisperTranscript || "";
+      }
+
+      voiceData = {
+        ...voiceData,
+        transcript: finalTranscript,
+        confidenceScore: voiceData.confidenceScore !== undefined && voiceData.confidenceScore !== null
+          ? voiceData.confidenceScore
+          : (finalTranscript ? 85 : 0),
+      };
 
       // 2. Evaluate transcript using nlp-service (Hybrid Engine)
       let evaluation = {};
@@ -203,18 +227,3 @@ export const evaluateOnly = async (req, res) => {
   }
 };
 
-function evaluateTranscriptFallback(transcript, keywords = null) {
-  const words = (transcript || "").split(/\s+/).filter(Boolean);
-  const count = words.length;
-  
-  return {
-    relevanceScore: count > 5 ? 80.0 : 40.0,
-    correctnessScore: count > 10 ? 82.0 : 50.0,
-    completenessScore: count > 15 ? 85.0 : 45.0,
-    communicationScore: count > 5 ? 84.0 : 60.0,
-    overallScore: count > 10 ? 82.8 : 48.8,
-    feedback: count > 5 ? "Response captured and evaluated." : "Response too short for deep feedback.",
-    strengths: count > 5 ? ["Responded to prompt"] : [],
-    improvements: count <= 5 ? ["Provide more detail"] : [],
-  };
-}
