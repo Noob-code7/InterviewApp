@@ -1,4 +1,4 @@
-﻿import fs from "fs";
+import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import axios from "axios";
@@ -9,6 +9,7 @@ import Session from "../models/Session.js";
 import Question from "../models/Question.js";
 import storageService from "./storageService.js";
 import llmService from "./llmService.js";
+import { mergeTranscripts, evaluateTranscriptFallback } from "../utils/transcriptHelper.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -393,7 +394,12 @@ export const processSession = async (sessionId) => {
                 VOICE_SERVICE_URL,
                 "audio",
               );
-              const sttTranscript = (voiceData.transcript && voiceData.transcript.trim()) || answer.voiceAnalysis?.transcript || answer.transcript || "";
+              const existingSlotTranscript = answer.voiceAnalysis?.transcript || answer.transcript || "";
+              const whisperTranscript = (voiceData.transcript && voiceData.transcript.trim()) || "";
+              const sttTranscript = whisperTranscript
+                ? mergeTranscripts(existingSlotTranscript, whisperTranscript)
+                : existingSlotTranscript;
+
               answer.voiceAnalysis = {
                 ...(answer.voiceAnalysis || {}),
                 ...voiceData,
@@ -448,6 +454,14 @@ export const processSession = async (sessionId) => {
                 questionDoc = await Question.findOne({ questionText: answer.questionText }).lean();
               }
 
+              // Answer-aware routing metadata: prefer persisted slot metadata,
+              // fall back to the question bank document.
+              const slotAnswerType = answer.answerType || questionDoc?.answerType || "explanatory";
+              const slotAccepted = (answer.acceptedAnswers?.length
+                ? answer.acceptedAnswers
+                : (questionDoc?.acceptedAnswers || []));
+              const slotCanonical = answer.canonicalAnswer || questionDoc?.canonicalAnswer || "";
+
               const nlpPayload = {
                 transcript,
                 text: transcript,
@@ -459,12 +473,19 @@ export const processSession = async (sessionId) => {
                 commonMisconceptions: questionDoc?.commonMisconceptions || [],
                 scoringRubric: questionDoc?.scoringRubric || null,
                 referenceAnswer: questionDoc?.referenceAnswer || "",
+                answerType: slotAnswerType,
+                isWarmup: Boolean(answer.isWarmup) || slotAnswerType === "warmup",
+                canonicalAnswer: slotCanonical,
+                acceptedAnswers: slotAccepted,
               };
 
               answer.nlpAnalysis = await sendTextToAnalyzer(nlpPayload, NLP_SERVICE_URL);
             }
           } catch (err) {
             console.error(`[Worker] NLP evaluation error for answer ${answer._id}:`, err.message);
+            if (!answer.nlpAnalysis || typeof answer.nlpAnalysis.overallScore !== "number") {
+              answer.nlpAnalysis = evaluateTranscriptFallback(transcript);
+            }
           }
         }
 
@@ -519,13 +540,18 @@ export const processSession = async (sessionId) => {
     await session.save();
 
     // 3. Compute Session-Wide Aggregate Scores
+    // Warm-up / Introduction answers are recorded and analyzed but excluded from
+    // all technical/verbal aggregates (approved answerType architecture).
+    const isScoredAnswer = (a) =>
+      !a.isWarmup && a.answerType !== "warmup" && !a.excludeFromScoring;
+
     let totalScoreSum = 0;
     let scoreCount = 0;
     let confidenceSum = 0;
     let confidenceCount = 0;
 
     for (const a of session.answers || []) {
-      if (a.nlpAnalysis?.overallScore != null) {
+      if (a.nlpAnalysis?.overallScore != null && isScoredAnswer(a)) {
         totalScoreSum += a.nlpAnalysis.overallScore;
         scoreCount += 1;
       }
@@ -547,9 +573,7 @@ export const processSession = async (sessionId) => {
     }
 
     const overallScore = scoreCount > 0 ? Math.round(totalScoreSum / scoreCount) : 0;
-    const confidenceScore = confidenceCount > 0 ? Math.round(confidenceSum / confidenceCount) : 0;
-
-    let readinessLevel = "low";
+    const confidenceScore = confidenceCount > 0 ? Math.round(confidenceSum / confidenceCount) : 0;    let readinessLevel = "low";
     if (overallScore >= 85) readinessLevel = "market-ready";
     else if (overallScore >= 75) readinessLevel = "high";
     else if (overallScore >= 60) readinessLevel = "medium";

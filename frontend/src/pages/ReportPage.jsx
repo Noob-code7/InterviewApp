@@ -458,7 +458,8 @@ export default function ReportPage() {
             {(report.answers || []).map((answer, index) => {
               const isExpanded = expandedQuestion === index;
               const nlp = answer.nlpAnalysis;
-              const trackLabel = answer.track === "project" ? "Project Track" : answer.track === "hr" ? "HR Behavioral" : "Technical Subject";
+              const isWarmup = answer.isWarmup === true || answer.answerType === "warmup";
+              const trackLabel = isWarmup ? "Warm-up / Introduction" : answer.track === "project" ? "Project Track" : answer.track === "hr" ? "HR Behavioral" : "Technical Subject";
 
               return (
                 <div

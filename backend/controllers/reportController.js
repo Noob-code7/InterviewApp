@@ -183,6 +183,11 @@ export const getReport = async (req, res) => {
 
 
 
+    // Warm-up / Introduction answers: recorded and analyzed for communication,
+    // but excluded from all technical/verbal aggregates (answerType architecture).
+    const isScoredAnswer = (a) =>
+      !a.isWarmup && a.answerType !== "warmup" && !a.excludeFromScoring;
+
     answers.forEach((ans) => {
 
       const nlp = ans.nlpAnalysis;
@@ -191,7 +196,7 @@ export const getReport = async (req, res) => {
 
 
 
-      if (nlp && typeof nlp.overallScore === "number") {
+      if (nlp && typeof nlp.overallScore === "number" && isScoredAnswer(ans)) {
 
         nlpScoreSum += nlp.overallScore;
 
@@ -444,6 +449,16 @@ export const getReport = async (req, res) => {
       trackBreakdown,
 
       voiceEmotions,
+
+      warmupAnswers: (session.answers || [])
+        .filter((a) => a.isWarmup || a.answerType === "warmup")
+        .map((a) => ({
+          questionText: a.questionText,
+          communicationScore: a.nlpAnalysis?.communicationScore ?? null,
+          overallScore: a.nlpAnalysis?.overallScore ?? null,
+          feedback: a.nlpAnalysis?.feedback || "",
+          label: "Warm-up / Introduction",
+        })),
 
       faceNotes: [...new Set(faceNotes)],
 

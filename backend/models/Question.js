@@ -8,6 +8,15 @@ const questionSchema = new mongoose.Schema(
     expectedConcepts: { type: [String], default: [] },
     acceptablePatterns: { type: [String], default: [] },
     commonMisconceptions: { type: [String], default: [] },
+    // Deterministic answer-type routing (Phase: answer-aware scoring)
+    // "explanatory" preserves the existing strict NLP pipeline unchanged.
+    answerType: {
+      type: String,
+      enum: ["binary", "single_answer", "short_answer", "multiple_choice_style", "explanatory"],
+      default: "explanatory",
+    },
+    canonicalAnswer: { type: String, default: "" },
+    acceptedAnswers: { type: [String], default: [] },
     difficulty: {
       type: String,
       enum: ["easy", "medium", "hard"],

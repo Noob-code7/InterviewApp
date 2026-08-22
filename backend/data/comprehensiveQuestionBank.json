@@ -132,6 +132,14 @@
   },
   {
     "questionText": "What is GUI?",
+    "answerType": "short_answer",
+    "canonicalAnswer": "Graphical User Interface",
+    "acceptedAnswers": [
+      "graphical user interface",
+      "gui stands for graphical user interface",
+      "it is a graphical user interface",
+      "a graphical user interface"
+    ],
     "track": "subject",
     "tags": [
       "os",
@@ -4342,6 +4350,15 @@
   },
   {
     "questionText": "What do you mean by FCFS?",
+    "answerType": "short_answer",
+    "canonicalAnswer": "First-Come, First-Served",
+    "acceptedAnswers": [
+      "first come first served",
+      "first come first serve",
+      "first-come, first-served",
+      "fcfs stands for first come first served",
+      "first come first served scheduling algorithm"
+    ],
     "track": "subject",
     "tags": [
       "os",
@@ -5061,6 +5078,16 @@
   },
   {
     "questionText": "What is Null attribute?",
+    "answerType": "single_answer",
+    "canonicalAnswer": "A missing or unknown value",
+    "acceptedAnswers": [
+      "missing value",
+      "unknown value",
+      "missing or unknown value",
+      "a missing or unknown value",
+      "unknown or missing value",
+      "null means missing or unknown value"
+    ],
     "track": "subject",
     "tags": [
       "dbms",
@@ -5715,6 +5742,15 @@
   },
   {
     "questionText": "What is degree of a Relation?",
+    "answerType": "single_answer",
+    "canonicalAnswer": "The number of attributes",
+    "acceptedAnswers": [
+      "number of attributes",
+      "the number of attributes",
+      "number of attributes in a relation",
+      "count of attributes",
+      "degree of relation is number of attributes"
+    ],
     "track": "subject",
     "tags": [
       "dbms",
@@ -8001,6 +8037,12 @@
   },
   {
     "questionText": "What is DHCP?",
+    "answerType": "short_answer",
+    "canonicalAnswer": "Dynamic Host Configuration Protocol",
+    "acceptedAnswers": [
+      "dynamic host configuration protocol",
+      "dhcp stands for dynamic host configuration protocol"
+    ],
     "track": "subject",
     "tags": [
       "networking",
@@ -8880,6 +8922,12 @@
   },
   {
     "questionText": "What is JDK?",
+    "answerType": "short_answer",
+    "canonicalAnswer": "Java Development Kit",
+    "acceptedAnswers": [
+      "java development kit",
+      "jdk stands for java development kit"
+    ],
     "track": "subject",
     "tags": [
       "oop",
@@ -8914,6 +8962,13 @@
   },
   {
     "questionText": "What is JVM?",
+    "answerType": "short_answer",
+    "canonicalAnswer": "Java Virtual Machine",
+    "acceptedAnswers": [
+      "java virtual machine",
+      "jvm stands for java virtual machine",
+      "virtual machine that runs java bytecode"
+    ],
     "track": "subject",
     "tags": [
       "oop",
@@ -8948,6 +9003,12 @@
   },
   {
     "questionText": "What is JRE?",
+    "answerType": "short_answer",
+    "canonicalAnswer": "Java Runtime Environment",
+    "acceptedAnswers": [
+      "java runtime environment",
+      "jre stands for java runtime environment"
+    ],
     "track": "subject",
     "tags": [
       "oop",
@@ -9128,6 +9189,16 @@
   },
   {
     "questionText": "What is a subclass?",
+    "answerType": "short_answer",
+    "canonicalAnswer": "A class that inherits from another class",
+    "acceptedAnswers": [
+      "class that inherits from another class",
+      "a class that inherits from another class",
+      "class derived from another class",
+      "a class derived from another class",
+      "child class",
+      "a child class"
+    ],
     "track": "subject",
     "tags": [
       "oop",
@@ -9412,6 +9483,15 @@
   },
   {
     "questionText": "What is a Java object?",
+    "answerType": "short_answer",
+    "canonicalAnswer": "An instance of a class",
+    "acceptedAnswers": [
+      "instance of a class",
+      "an instance of a class",
+      "runtime instance of a class",
+      "a runtime instance of a class",
+      "object is an instance of a class"
+    ],
     "track": "subject",
     "tags": [
       "oop",
@@ -9814,6 +9894,18 @@
   },
   {
     "questionText": "Can you override a private method or static method in Java?",
+    "answerType": "binary",
+    "canonicalAnswer": "no",
+    "acceptedAnswers": [
+      "no",
+      "false",
+      "no we cannot",
+      "no you cannot",
+      "we cannot",
+      "you cannot",
+      "it is not possible",
+      "not possible"
+    ],
     "track": "subject",
     "tags": [
       "oop",
@@ -9923,6 +10015,17 @@
   },
   {
     "questionText": "Can you write multiple catch blocks under a single try block?",
+    "answerType": "binary",
+    "canonicalAnswer": "yes",
+    "acceptedAnswers": [
+      "yes",
+      "true",
+      "yes we can",
+      "yes you can",
+      "we can",
+      "it is possible",
+      "yes it is possible"
+    ],
     "track": "subject",
     "tags": [
       "oop",

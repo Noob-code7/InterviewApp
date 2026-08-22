@@ -278,6 +278,9 @@ async function seed() {
               acceptablePatterns: q.acceptablePatterns || [],
               commonMisconceptions: q.commonMisconceptions || [],
               referenceAnswer: q.referenceAnswer || '',
+              answerType: q.answerType || 'explanatory',
+              canonicalAnswer: q.canonicalAnswer || '',
+              acceptedAnswers: q.acceptedAnswers || [],
               scoringRubric: q.scoringRubric || {
                 relevanceWeight: 0.25,
                 conceptWeight: 0.40,

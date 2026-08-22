@@ -33,7 +33,11 @@ const nlpAnalysisSchema = new mongoose.Schema({
   improvements:      { type: [String], default: [] },
   source:            { type: String, default: 'local' },
 
-  misconceptionsDetected: { type: [String], default: [] },
+  misconceptionsDetected: { type: [String], default: [] },
+
+  // Answer-aware routing provenance
+  evaluationEngine:  { type: String, default: '' },
+  answerType:        { type: String, default: '' },
 }, { _id: false })
 
 const followUpSchema = new mongoose.Schema({
@@ -55,6 +59,19 @@ const answerSchema = new mongoose.Schema({
   questionText:   { type: String, required: true },
   track:          { type: String, default: 'subject' },
   projectContext: { type: mongoose.Schema.Types.Mixed, default: null },
+  // Answer-aware scoring metadata (persisted so analysis does not depend on DB lookups)
+  answerType: {
+    type: String,
+    enum: ['warmup', 'binary', 'single_answer', 'short_answer', 'multiple_choice_style', 'explanatory'],
+    default: 'explanatory',
+  },
+  isWarmup:          { type: Boolean, default: false },
+  excludeFromScoring:{ type: Boolean, default: false },
+  canonicalAnswer:   { type: String, default: '' },
+  acceptedAnswers:   { type: [String], default: [] },
+  expectedKeywords:  { type: [String], default: [] },
+  expectedConcepts:  { type: [String], default: [] },
+  referenceAnswer:   { type: String, default: '' },
   startedAt:      { type: Date },
   completedAt:    { type: Date },
   videoUrl:       { type: String, default: '' },

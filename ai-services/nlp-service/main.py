@@ -20,6 +20,10 @@ from semantic_evaluator import (
     compute_semantic_concept_alignment,
     compute_semantic_keyword_matches
 )
+from deterministic_evaluator import (
+    DETERMINISTIC_ANSWER_TYPES,
+    evaluate_deterministic_answer,
+)
 
 load_dotenv()
 
@@ -47,6 +51,11 @@ class NLPRequest(BaseModel):
     commonMisconceptions: Optional[List[str]] = None
     scoringRubric: Optional[Dict[str, Any]] = None
     referenceAnswer: Optional[str] = None
+    # Question-aware answer routing (Phase: answer-type architecture)
+    answerType: Optional[str] = "explanatory"  # 'warmup'|'binary'|'single_answer'|'short_answer'|'multiple_choice_style'|'explanatory'
+    isWarmup: Optional[bool] = False
+    canonicalAnswer: Optional[str] = None
+    acceptedAnswers: Optional[List[str]] = None
 
 
 class NLPResult(BaseModel):
@@ -64,6 +73,8 @@ class NLPResult(BaseModel):
     semanticConceptsMatched: List[str] = []
     misconceptionsDetected: List[str] = []
     evaluationEngine: str = "spacy_semantic_nlp"
+    answerType: str = "explanatory"
+    isWarmup: bool = False
 
 
 _semantic_model_ready = threading.Event()
@@ -167,6 +178,91 @@ def calculate_grammar_score(text: str) -> float:
         score -= 15
 
     return max(0.0, min(100.0, round(score, 1)))
+
+def evaluate_warmup_answer(
+    question: str,
+    transcript: str,
+    structure_fn=None,
+    grammar_fn=None,
+) -> NLPResult:
+    """
+    Warm-up / Introduction evaluation (answerType == 'warmup').
+    Communication-only analysis: delivery, structure, fluency, substance.
+    NO technical correctness is claimed - the backend excludes warm-up answers
+    from all technical/verbal aggregates.
+    """
+    transcript_clean = (transcript or "").strip()
+    if not transcript_clean:
+        return NLPResult(
+            relevanceScore=0.0, correctnessScore=0.0, completenessScore=0.0,
+            communicationScore=0.0, structureScore=0.0, grammarScore=0.0,
+            overallScore=0.0, feedback="No verbal response provided.",
+            strengths=[], improvements=["Deliver your introduction clearly."],
+            semanticSimilarity=0.0, semanticConceptsMatched=[],
+            evaluationEngine="warmup_communication", answerType="warmup", isWarmup=True,
+        )
+
+    doc = spacy_nlp(transcript_clean)
+    words = [t for t in doc if not t.is_punct and not t.is_space]
+    word_count = len(words)
+
+    structure_score = structure_fn(transcript_clean) or 0.0
+    grammar_score = grammar_fn(transcript_clean) or 0.0
+
+    lowered = transcript_clean.lower()
+    from spacy_evaluator import ABSURD_MARKERS
+    import re as _re
+    absurd = any(_re.search(r"\b" + _re.escape(m) + r"\b", lowered) for m in ABSURD_MARKERS)
+
+    sentences = [s.strip() for s in re.split(r"[.!?]+", transcript_clean) if s.strip()]
+    has_structure = len(sentences) >= 2
+
+    strengths = []
+    improvements = []
+
+    # Communication clarity proxy from verbal content (voice telemetry is scored separately).
+    if absurd:
+        communication_score = 10.0
+        feedback = "Introduction contained non-professional content."
+        improvements.append("Keep the introduction professional and relevant.")
+    else:
+        length_component = min(70.0, word_count * 1.1)
+        structure_component = 15.0 if has_structure else 0.0
+        communication_score = min(96.0, round(20.0 + length_component + structure_component, 1))
+        feedback = "Communication warm-up captured - not part of the technical score."
+        if word_count >= 60:
+            strengths.append("Delivered a substantial introduction with sufficient detail.")
+        elif word_count >= 25:
+            strengths.append("Provided a reasonable spoken introduction.")
+            improvements.append("Add more detail about projects, skills, and goals.")
+        else:
+            improvements.append("Introduce yourself with education, skills, projects, and goals.")
+
+    if has_structure:
+        strengths.append("Structured the introduction in multiple clear statements.")
+    if grammar_score >= 80.0:
+        strengths.append("Clear grammatical delivery.")
+
+    overall = round(min(98.0, communication_score * 0.55 + structure_score * 0.25 + max(grammar_score, communication_score * 0.6) * 0.20), 1)
+
+    return NLPResult(
+        relevanceScore=min(90.0, communication_score),
+        correctnessScore=0.0,  # warm-up carries no technical correctness claim
+        completenessScore=min(92.0, communication_score),
+        communicationScore=communication_score,
+        structureScore=structure_score,
+        grammarScore=grammar_score,
+        overallScore=overall,
+        feedback=feedback,
+        strengths=strengths or ["Spoken input was captured."],
+        improvements=improvements,
+        semanticSimilarity=0.0,
+        semanticConceptsMatched=[],
+        evaluationEngine="warmup_communication",
+        answerType="warmup",
+        isWarmup=True,
+    )
+
 
 def evaluate_with_local_nlp(
     question: str,
@@ -511,6 +607,61 @@ async def analyze_nlp(body: NLPRequest):
     # Wait for background semantic-model warmup (bounded); falls back to the
     # lazy-load path inside the evaluator if warmup is still unfinished.
     _semantic_model_ready.wait(timeout=30)
+
+    req_answer_type = (body.answerType or "explanatory").strip()
+    if body.isWarmup:
+        req_answer_type = "warmup"
+
+    # ── Warm-up routing: communication-only, no technical score claim ──────────
+    if req_answer_type == "warmup":
+        warmup_result = evaluate_warmup_answer(
+            question=input_question,
+            transcript=input_transcript,
+            structure_fn=calculate_structure_score,
+            grammar_fn=calculate_grammar_score,
+        )
+        return {"success": True, "data": warmup_result.model_dump()}
+
+    # ── Deterministic answer-type routing (binary/single/short/mcq) ───────────
+    if req_answer_type in DETERMINISTIC_ANSWER_TYPES and (
+        body.acceptedAnswers or body.canonicalAnswer or req_answer_type == "binary"
+    ):
+        det = evaluate_deterministic_answer(
+            question=input_question,
+            transcript=input_transcript,
+            answer_type=req_answer_type,
+            canonical_answer=body.canonicalAnswer or "",
+            accepted_answers=body.acceptedAnswers or [],
+            common_misconceptions=body.commonMisconceptions or [],
+            reference_answer=body.referenceAnswer or "",
+            structure_fn=calculate_structure_score,
+            grammar_fn=calculate_grammar_score,
+        )
+        if det is not None:
+            if det.get("status") == "fallback_standard":
+                local_result = evaluate_with_local_nlp(
+                    question=input_question,
+                    transcript=input_transcript,
+                    q_type=body.questionType or "mixed",
+                    keywords=body.keywords,
+                    expected_concepts=body.expectedConcepts,
+                    acceptable_patterns=body.acceptablePatterns,
+                    common_misconceptions=body.commonMisconceptions,
+                    scoring_rubric=body.scoringRubric,
+                    reference_answer=body.referenceAnswer,
+                )
+                data = local_result.model_dump()
+                cap_c = float(det.get("cap_correctness", 45.0))
+                cap_o = float(det.get("cap_overall", 40.0))
+                if data["correctnessScore"] > cap_c:
+                    data["correctnessScore"] = cap_c
+                if data["overallScore"] > cap_o:
+                    data["overallScore"] = cap_o
+                data["answerType"] = req_answer_type
+                return {"success": True, "data": data}
+            det.setdefault("answerType", req_answer_type)
+            det.pop("status", None)
+            return {"success": True, "data": NLPResult(**det).model_dump()}
 
     local_result = evaluate_with_local_nlp(
         question=input_question,

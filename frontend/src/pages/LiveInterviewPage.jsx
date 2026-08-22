@@ -1194,7 +1194,13 @@ export default function LiveInterviewPage() {
             interviewState !== INTERVIEW_STATES.GREETING_ACK &&
             currentQ?.track && (
               <span className="font-mono text-[10px] uppercase px-2.5 py-1 rounded bg-[#161615] border border-[#2A2A28] text-[#1D5DFF]">
-                {currentQ.track === "project" ? "Project Track" : currentQ.track === "hr" ? "HR Track" : "Technical Subject"}
+                {currentQ.isWarmup === true || currentQ.answerType === "warmup"
+                  ? "Warm-up / Introduction"
+                  : currentQ.track === "project"
+                    ? "Project Track"
+                    : currentQ.track === "hr"
+                      ? "HR Track"
+                      : "Technical Subject"}
               </span>
             )}
           <div className="font-mono text-xs text-[#6E6D68]">
